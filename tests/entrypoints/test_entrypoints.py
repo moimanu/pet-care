@@ -79,3 +79,17 @@ def test_build_middleware_and_wrapper():
 
     res = wrapper.dispensar_racao(50.0)
     assert res["sucesso"] is True
+
+
+def test_client_cli_methods():
+    from src.entrypoints.run_client_cli import ClientCLI
+
+    mock_middleware = DummyNode(primary=True)
+    cli_middleware = PyroMiddlewareWrapper(build_middleware({1: mock_middleware, 2: mock_middleware}))
+    cli = ClientCLI(cli_middleware)
+
+    assert cli.handle_option("1") is True
+    assert cli.handle_option("4") is True
+    assert cli.handle_option("5") is True
+    assert cli.handle_option("0") is False
+
