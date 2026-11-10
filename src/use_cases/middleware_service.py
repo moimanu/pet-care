@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import logging
 from typing import Any, Mapping, Optional
@@ -7,7 +8,7 @@ import uuid
 
 from src.domain.entities import Command, CommandResult, PetState
 from src.domain.exceptions import NodeUnreachableError, QuorumError
-from src.domain.interfaces import IControllerNode
+from src.domain.interfaces import ControllerNode
 
 logger = logging.getLogger(__name__)
 
@@ -17,7 +18,7 @@ class MiddlewareService:
 
     def __init__(
         self,
-        nodes: Mapping[int, IControllerNode],
+        nodes: Mapping[int, ControllerNode],
         timeout: float = 1.0,
         quorum_threshold: int = 2,
     ) -> None:
@@ -30,45 +31,35 @@ class MiddlewareService:
         responses: dict[int, PetState] = {}
 
         with ThreadPoolExecutor(max_workers=max(1, len(self.nodes))) as executor:
-            future_to_id = {
-                executor.submit(node.get_state): node_id
-                for node_id, node in self.nodes.items()
-            }
+            future_to_id = {executor.submit(n.get_state): nid for nid, n in self.nodes.items()}
             for future in as_completed(future_to_id, timeout=self.timeout + 0.5):
                 node_id = future_to_id[future]
                 try:
-                    state = future.result(timeout=self.timeout)
-                    responses[node_id] = state
+                    responses[node_id] = future.result(timeout=self.timeout)
                 except Exception as exc:
                     logger.warning("Nó %s falhou na consulta de estado: %s", node_id, exc)
 
-        # Group by canonical state hash
-        hash_to_nodes: dict[str, list[int]] = {}
-        hash_to_state: dict[str, PetState] = {}
-
+        groups: dict[str, list[tuple[int, PetState]]] = defaultdict(list)
         for node_id, state in responses.items():
-            s_hash = state.state_hash()
-            hash_to_nodes.setdefault(s_hash, []).append(node_id)
-            hash_to_state[s_hash] = state
+            groups[state.state_hash()].append((node_id, state))
 
-        for s_hash, node_ids in hash_to_nodes.items():
-            if len(node_ids) >= self.quorum_threshold:
-                # Identify and alert Byzantine divergent nodes
-                for other_hash, divergent_nodes in hash_to_nodes.items():
+        for s_hash, members in groups.items():
+            if len(members) >= self.quorum_threshold:
+                for other_hash, divergent_members in groups.items():
                     if other_hash != s_hash:
-                        for div_id in divergent_nodes:
+                        for div_id, _ in divergent_members:
                             logger.error(
                                 "[SEGURANÇA] Falha Bizantina detectada no Nó %s. Resposta descartada.",
                                 div_id,
                             )
-                return hash_to_state[s_hash]
+                return members[0][1]
 
         raise QuorumError(
             f"Quorum Byzantine não atingido: obtidas {len(responses)} respostas, "
             f"nenhum consenso >= {self.quorum_threshold} nós."
         )
 
-    def get_primary_node(self) -> tuple[int, IControllerNode]:
+    def get_primary_node(self) -> tuple[int, ControllerNode]:
         """Finds active primary node or falls back to first responsive node."""
         for node_id, node in self.nodes.items():
             try:
@@ -77,20 +68,17 @@ class MiddlewareService:
             except Exception:
                 continue
 
-        for node_id, node in self.nodes.items():
-            return node_id, node
-
-        raise NodeUnreachableError("Nenhum nó controlador disponível no Middleware")
+        try:
+            return next(iter(self.nodes.items()))
+        except StopIteration:
+            raise NodeUnreachableError("Nenhum nó controlador disponível no Middleware")
 
     def send_command(
         self, acao: str, parametros: Optional[dict[str, Any]] = None
     ) -> CommandResult:
         """Dispatches an idempotent command to primary and replicates to peers."""
-        if parametros is None:
-            parametros = {}
-
-        command_id = str(uuid.uuid4())
-        command = Command(command_id=command_id, acao=acao, parametros=parametros)
+        params = parametros or {}
+        command = Command(command_id=str(uuid.uuid4()), acao=acao, parametros=params)
 
         primary_id, primary_node = self.get_primary_node()
         result: Optional[CommandResult] = None
@@ -104,7 +92,6 @@ class MiddlewareService:
                 primary_id,
                 exc,
             )
-            # Find candidate replica to promote
             for candidate_id, candidate_node in self.nodes.items():
                 if candidate_id == primary_id:
                     continue
@@ -130,7 +117,6 @@ class MiddlewareService:
 
         return result
 
-
     def dispensar_racao(self, quantidade_gramas: float = 50.0) -> CommandResult:
         return self.send_command("LIBERAR_RACAO", {"quantidade_gramas": float(quantidade_gramas)})
 
@@ -138,8 +124,7 @@ class MiddlewareService:
         return self.send_command("REPOR_AGUA", {"quantidade_ml": float(quantidade_ml)})
 
     def resetar_areia(self) -> CommandResult:
-        return self.send_command("RESETAR_AREIA", {})
+        return self.send_command("RESETAR_AREIA")
 
     def silenciar_alarme(self) -> CommandResult:
-        return self.send_command("SILENCIAR_ALARME", {})
-
+        return self.send_command("SILENCIAR_ALARME")
