@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 import json
 import logging
 from typing import Any, Iterable, Mapping, Optional
@@ -7,7 +8,7 @@ import uuid
 
 from src.domain.entities import Command, CommandResult, PetState
 from src.domain.exceptions import SanityError
-from src.domain.interfaces import IBrokerClient, IControllerNode, IStateRepository
+from src.domain.interfaces import BrokerClient, ControllerNode, StateRepository
 from src.domain.validators import TelemetrySanityValidator
 
 logger = logging.getLogger(__name__)
@@ -23,8 +24,8 @@ class ControllerService:
     def __init__(
         self,
         node_id: int,
-        repository: IStateRepository,
-        broker: IBrokerClient,
+        repository: StateRepository,
+        broker: BrokerClient,
         is_primary: bool = False,
         is_corrupt: bool = False,
     ) -> None:
@@ -41,29 +42,13 @@ class ControllerService:
         self._is_primary = primary
 
     def get_state(self) -> PetState:
-        current = self.repository.get_state()
-        if current is None:
-            current = PetState(
-                racao_gramas=0.0,
-                agua_ml=0.0,
-                areia_usos=0,
-                status_fuga="DENTRO",
-                alarme_ativo=False,
-                atualizado_em="",
-            )
+        state = self.repository.get_state() or PetState()
+        return replace(state, status_fuga="FORA", alarme_ativo=True) if self.is_corrupt else state
 
-        if self.is_corrupt:
-            # Inject Byzantine faulty state for testing consensus robustness
-            return PetState(
-                racao_gramas=current.racao_gramas,
-                agua_ml=current.agua_ml,
-                areia_usos=current.areia_usos,
-                status_fuga="FORA",
-                alarme_ativo=True,
-                atualizado_em=current.atualizado_em,
-            )
-
-        return current
+    def _actuate(self, topic: str, acao: str, command_id: Optional[str] = None, **extra: Any) -> None:
+        if self._is_primary:
+            payload = {"acao": acao, "command_id": command_id or str(uuid.uuid4()), **extra}
+            self.broker.publish(topic, payload, qos=2)
 
     def handle_telemetry(self, topic: str, payload: Mapping[str, Any]) -> None:
         sensor = topic.strip().rstrip("/").split("/")[-1]
@@ -74,64 +59,25 @@ class ControllerService:
             return
 
         current = self.get_state()
-        timestamp = str(payload.get("timestamp", ""))
-
-        racao_gramas = current.racao_gramas
-        agua_ml = current.agua_ml
-        areia_usos = current.areia_usos
-        status_fuga = current.status_fuga
-        alarme_ativo = current.alarme_ativo
+        changes: dict[str, Any] = {"atualizado_em": str(payload.get("timestamp", ""))}
 
         if sensor == "racao":
-            racao_gramas = float(payload["nivel_gramas"])
-            if racao_gramas < 50.0 and self.is_primary():
-                self.broker.publish(
-                    self.TOPIC_RACAO_ATUADOR,
-                    {
-                        "acao": "LIBERAR_RACAO",
-                        "quantidade_gramas": 50.0,
-                        "command_id": str(uuid.uuid4()),
-                    },
-                    qos=2,
-                )
+            changes["racao_gramas"] = val = float(payload["nivel_gramas"])
+            if val < 50.0:
+                self._actuate(self.TOPIC_RACAO_ATUADOR, "LIBERAR_RACAO", quantidade_gramas=50.0)
         elif sensor == "agua":
-            agua_ml = float(payload["nivel_ml"])
-            if agua_ml < 150.0 and self.is_primary():
-                self.broker.publish(
-                    self.TOPIC_AGUA_ATUADOR,
-                    {
-                        "acao": "REPOR_AGUA",
-                        "quantidade_ml": 200.0,
-                        "command_id": str(uuid.uuid4()),
-                    },
-                    qos=2,
-                )
+            changes["agua_ml"] = val = float(payload["nivel_ml"])
+            if val < 150.0:
+                self._actuate(self.TOPIC_AGUA_ATUADOR, "REPOR_AGUA", quantidade_ml=200.0)
         elif sensor == "areia":
-            areia_usos = int(payload["usos_acumulados"])
+            changes["areia_usos"] = int(payload["usos_acumulados"])
         elif sensor == "fuga":
-            status_fuga = str(payload["perimetro"]).strip().upper()
-            if status_fuga == "FORA" and not alarme_ativo:
-                alarme_ativo = True
-                if self.is_primary():
-                    self.broker.publish(
-                        self.TOPIC_ALARME_ATUADOR,
-                        {
-                            "acao": "DISPARAR_ALARME",
-                            "motivo": "FUGA_DETECTADA",
-                            "command_id": str(uuid.uuid4()),
-                        },
-                        qos=2,
-                    )
+            changes["status_fuga"] = status = str(payload["perimetro"]).strip().upper()
+            if status == "FORA" and not current.alarme_ativo:
+                changes["alarme_ativo"] = True
+                self._actuate(self.TOPIC_ALARME_ATUADOR, "DISPARAR_ALARME", motivo="FUGA_DETECTADA")
 
-        new_state = PetState(
-            racao_gramas=racao_gramas,
-            agua_ml=agua_ml,
-            areia_usos=areia_usos,
-            status_fuga=status_fuga,
-            alarme_ativo=alarme_ativo,
-            atualizado_em=timestamp,
-        )
-        self.repository.save_state(new_state)
+        self.repository.save_state(replace(current, **changes))
 
     def execute_command(self, command: Command) -> CommandResult:
         """Executes a command idempotently with event recording and actuation."""
@@ -143,63 +89,25 @@ class ControllerService:
             )
 
         current = self.get_state()
-        racao = current.racao_gramas
-        agua = current.agua_ml
-        areia = current.areia_usos
-        status_fuga = current.status_fuga
-        alarme = current.alarme_ativo
-        timestamp = command.timestamp or current.atualizado_em
-
         acao = command.acao.strip().upper()
+        timestamp = command.timestamp or current.atualizado_em
+        changes: dict[str, Any] = {"atualizado_em": timestamp}
 
         if acao == "LIBERAR_RACAO":
             qty = float(command.parametros.get("quantidade_gramas", 50.0))
-            racao = min(500.0, racao + qty)
-            if self.is_primary():
-                self.broker.publish(
-                    self.TOPIC_RACAO_ATUADOR,
-                    {
-                        "acao": "LIBERAR_RACAO",
-                        "quantidade_gramas": qty,
-                        "command_id": command.command_id,
-                    },
-                    qos=2,
-                )
+            changes["racao_gramas"] = min(TelemetrySanityValidator.MAX_RACAO_GRAMAS, current.racao_gramas + qty)
+            self._actuate(self.TOPIC_RACAO_ATUADOR, acao, command.command_id, quantidade_gramas=qty)
         elif acao == "REPOR_AGUA":
             qty = float(command.parametros.get("quantidade_ml", 200.0))
-            agua = min(1000.0, agua + qty)
-            if self.is_primary():
-                self.broker.publish(
-                    self.TOPIC_AGUA_ATUADOR,
-                    {
-                        "acao": "REPOR_AGUA",
-                        "quantidade_ml": qty,
-                        "command_id": command.command_id,
-                    },
-                    qos=2,
-                )
+            changes["agua_ml"] = min(TelemetrySanityValidator.MAX_AGUA_ML, current.agua_ml + qty)
+            self._actuate(self.TOPIC_AGUA_ATUADOR, acao, command.command_id, quantidade_ml=qty)
         elif acao == "RESETAR_AREIA":
-            areia = 0
+            changes["areia_usos"] = 0
         elif acao == "SILENCIAR_ALARME":
-            alarme = False
-            if self.is_primary():
-                self.broker.publish(
-                    self.TOPIC_ALARME_ATUADOR,
-                    {
-                        "acao": "SILENCIAR_ALARME",
-                        "command_id": command.command_id,
-                    },
-                    qos=2,
-                )
+            changes["alarme_ativo"] = False
+            self._actuate(self.TOPIC_ALARME_ATUADOR, acao, command.command_id)
 
-        new_state = PetState(
-            racao_gramas=racao,
-            agua_ml=agua,
-            areia_usos=areia,
-            status_fuga=status_fuga,
-            alarme_ativo=alarme,
-            atualizado_em=timestamp,
-        )
+        new_state = replace(current, **changes)
         self.repository.save_state(new_state)
         self.repository.record_event(
             command_id=command.command_id,
