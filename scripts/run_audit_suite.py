@@ -225,3 +225,47 @@ def run_scenario_3_byzantine(tmpdir: str) -> dict[str, Any]:
         "consensus_status_fuga": consensus_state.status_fuga,
     }
 
+
+def run_all_scenarios(tmpdir: Optional[str] = None) -> bool:
+    """Executes all 4 experimental evaluation scenarios sequentially."""
+    import tempfile
+    import sys
+
+    print("================================================================================")
+    print("        SUÍTE DE AUDITORIA E VALIDAÇÃO DISTRIBUÍDA - SISTEMA PET CARE          ")
+    print("================================================================================")
+
+    all_passed = True
+    context_dir = tmpdir or tempfile.mkdtemp(prefix="petcare_audit_")
+
+    scenarios = [
+        ("Cenário 1: Replicação Nominal (3 Nós + Idempotência na Borda)", run_scenario_1_nominal),
+        ("Cenário 2: Failover Crash-Stop (Promoção Transparente & Boot Catch-up)", run_scenario_2_failover),
+        ("Cenário 3: Falha Bizantina (Tolerância 2f+1 & Descarte por Maioria)", run_scenario_3_byzantine),
+        ("Cenário 4: Sanitização de Borda (Filtro Físico & Proteção de Estado)", run_scenario_4_sanitization),
+    ]
+
+    for title, scenario_fn in scenarios:
+        try:
+            res = scenario_fn(context_dir)
+            if res.get("success"):
+                print(f" [PASS] {title}")
+            else:
+                print(f" [FAIL] {title} -> Detalhes: {res}")
+                all_passed = False
+        except Exception as exc:
+            print(f" [ERROR] {title} -> Exceção: {exc}")
+            all_passed = False
+
+    print("================================================================================")
+    print(f" RESULTADO FINAL: {'TODOS OS 4 CENÁRIOS FORAM VALIDADOS COM SUCESSO!' if all_passed else 'FALHA EM UM OU MAIS CENÁRIOS'}")
+    print("================================================================================")
+    return all_passed
+
+
+if __name__ == "__main__":
+    import sys
+    success = run_all_scenarios()
+    sys.exit(0 if success else 1)
+
+
