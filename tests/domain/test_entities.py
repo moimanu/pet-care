@@ -1,9 +1,16 @@
-from dataclasses import asdict
-import hashlib
-import json
 import pytest
 
-from src.domain.entities import Command, CommandResult, PetState, TelemetryEvent
+from src.domain.entities import Command, CommandResult, PetState
+
+
+def test_pet_state_default_creation():
+    state = PetState()
+    assert state.racao_gramas == 0.0
+    assert state.agua_ml == 0.0
+    assert state.areia_usos == 0
+    assert state.status_fuga == "DENTRO"
+    assert state.alarme_ativo is False
+    assert state.atualizado_em == ""
 
 
 def test_pet_state_creation():
@@ -23,6 +30,24 @@ def test_pet_state_creation():
     assert state.atualizado_em == "2026-11-10T15:00:00Z"
 
 
+def test_pet_state_from_mapping():
+    data = {
+        "racao_gramas": "150.5",
+        "agua_ml": 300,
+        "areia_usos": "3",
+        "status_fuga": "fora",
+        "alarme_ativo": 1,
+        "atualizado_em": "2026-11-10T19:00:00Z",
+    }
+    state = PetState.from_mapping(data)
+    assert state.racao_gramas == 150.5
+    assert state.agua_ml == 300.0
+    assert state.areia_usos == 3
+    assert state.status_fuga == "fora"
+    assert state.alarme_ativo is True
+    assert state.atualizado_em == "2026-11-10T19:00:00Z"
+
+
 def test_pet_state_quorum_hash_ignores_timestamp_and_rounds_floats():
     state1 = PetState(
         racao_gramas=180.004,
@@ -40,7 +65,6 @@ def test_pet_state_quorum_hash_ignores_timestamp_and_rounds_floats():
         alarme_ativo=False,
         atualizado_em="2026-11-10T15:05:00Z",
     )
-    # Both round to 180.00 and 420.00, differ only in sub-cent floating or timestamps
     assert state1.state_hash() == state2.state_hash()
 
 
@@ -62,16 +86,6 @@ def test_pet_state_quorum_hash_detects_meaningful_differences():
         atualizado_em="2026-11-10T15:00:00Z",
     )
     assert state1.state_hash() != state2.state_hash()
-
-
-def test_telemetry_event_creation():
-    event = TelemetryEvent(
-        sensor="racao",
-        payload={"nivel_gramas": 180.0},
-        timestamp="2026-11-10T15:00:00Z",
-    )
-    assert event.sensor == "racao"
-    assert event.payload["nivel_gramas"] == 180.0
 
 
 def test_command_and_result_creation():

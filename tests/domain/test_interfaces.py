@@ -2,7 +2,14 @@ from typing import Any, Callable, Optional
 import pytest
 
 from src.domain.entities import Command, CommandResult, PetState
-from src.domain.interfaces import IBrokerClient, IControllerNode, IStateRepository
+from src.domain.interfaces import (
+    BrokerClient,
+    ControllerNode,
+    IBrokerClient,
+    IControllerNode,
+    IStateRepository,
+    StateRepository,
+)
 
 
 class DummyRepository:
@@ -44,14 +51,7 @@ class DummyBroker:
 class DummyControllerNode:
     def __init__(self, primary: bool = False) -> None:
         self._primary = primary
-        self._state = PetState(
-            racao_gramas=100.0,
-            agua_ml=200.0,
-            areia_usos=1,
-            status_fuga="DENTRO",
-            alarme_ativo=False,
-            atualizado_em="2026-11-10T15:00:00Z",
-        )
+        self._state = PetState()
 
     def get_state(self) -> PetState:
         return self._state
@@ -68,10 +68,13 @@ class DummyControllerNode:
 
 def test_interfaces_runtime_checking():
     repo = DummyRepository()
+    assert isinstance(repo, StateRepository)
     assert isinstance(repo, IStateRepository)
 
     broker = DummyBroker()
+    assert isinstance(broker, BrokerClient)
     assert isinstance(broker, IBrokerClient)
 
     node = DummyControllerNode()
+    assert isinstance(node, ControllerNode)
     assert isinstance(node, IControllerNode)
