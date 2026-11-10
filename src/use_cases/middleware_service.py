@@ -93,16 +93,43 @@ class MiddlewareService:
         command = Command(command_id=command_id, acao=acao, parametros=parametros)
 
         primary_id, primary_node = self.get_primary_node()
-        result = primary_node.execute_command(command)
+        result: Optional[CommandResult] = None
+        executed_primary_id = primary_id
 
+        try:
+            result = primary_node.execute_command(command)
+        except Exception as exc:
+            logger.warning(
+                "Nó Primário %s inalcançável durante comando: %s. Iniciando failover transparente.",
+                primary_id,
+                exc,
+            )
+            # Find candidate replica to promote
+            for candidate_id, candidate_node in self.nodes.items():
+                if candidate_id == primary_id:
+                    continue
+                try:
+                    candidate_node.set_primary(True)
+                    result = candidate_node.execute_command(command)
+                    executed_primary_id = candidate_id
+                    logger.info("Nó %s promovido com sucesso a novo Líder Primário.", candidate_id)
+                    break
+                except Exception as cand_exc:
+                    logger.warning("Falha ao promover nó candidato %s: %s", candidate_id, cand_exc)
+
+            if result is None:
+                raise NodeUnreachableError("Todos os nós controladores falharam ao executar comando")
+
+        # Replicate to remaining healthy nodes
         for node_id, node in self.nodes.items():
-            if node_id != primary_id:
+            if node_id != executed_primary_id:
                 try:
                     node.execute_command(command)
                 except Exception as exc:
                     logger.warning("Falha na replicacao do comando para o nó %s: %s", node_id, exc)
 
         return result
+
 
     def dispensar_racao(self, quantidade_gramas: float = 50.0) -> CommandResult:
         return self.send_command("LIBERAR_RACAO", {"quantidade_gramas": float(quantidade_gramas)})
