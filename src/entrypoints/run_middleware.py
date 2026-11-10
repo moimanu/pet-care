@@ -3,10 +3,19 @@ from __future__ import annotations
 import argparse
 from dataclasses import asdict
 import logging
+from pathlib import Path
+import sys
 from typing import Any, Mapping
+
+# Ensure project root is in sys.path when executed directly as a script
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
+
 import Pyro5.api
 
 from src.adapters.pyro_gateway import PyroControllerNodeProxy
+
 from src.domain.interfaces import IControllerNode
 from src.use_cases.middleware_service import MiddlewareService
 

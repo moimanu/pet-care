@@ -2,11 +2,20 @@ from __future__ import annotations
 
 import argparse
 import logging
+from pathlib import Path
+import sys
 import time
 from typing import Iterable, Optional
+
+# Ensure project root is in sys.path when executed directly as a script
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
+
 import Pyro5.api
 
 from src.adapters.mqtt_client import MqttClient
+
 from src.adapters.pyro_gateway import PyroControllerNodeProxy, PyroControllerNodeWrapper
 from src.adapters.sqlite_repository import SqliteRepository
 from src.domain.interfaces import IBrokerClient, IControllerNode

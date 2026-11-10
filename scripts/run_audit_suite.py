@@ -2,9 +2,17 @@ from __future__ import annotations
 
 import logging
 import os
+from pathlib import Path
+import sys
 from typing import Any, Callable
 
+# Ensure project root is in sys.path when executed directly as a script
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
+
 from src.adapters.sqlite_repository import SqliteRepository
+
 from src.domain.entities import PetState
 from src.use_cases.controller_service import ControllerService
 from src.use_cases.middleware_service import MiddlewareService

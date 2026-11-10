@@ -3,12 +3,20 @@ from __future__ import annotations
 import argparse
 from datetime import datetime, timezone
 import logging
+from pathlib import Path
+import sys
 import threading
 import time
 from typing import Any, Mapping, Optional
 
+# Ensure project root is in sys.path when executed directly as a script
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
+
 from src.adapters.mqtt_client import MqttClient
 from src.domain.interfaces import IBrokerClient
+
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] (IoT Edge) %(message)s")
 logger = logging.getLogger("IoTDevices")
