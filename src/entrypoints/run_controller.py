@@ -4,7 +4,6 @@ import argparse
 import logging
 from pathlib import Path
 import sys
-import time
 from typing import Iterable, Optional
 
 # Ensure project root is in sys.path when executed directly as a script
@@ -15,10 +14,9 @@ if str(_PROJECT_ROOT) not in sys.path:
 import Pyro5.api
 
 from src.adapters.mqtt_client import MqttClient
-
 from src.adapters.pyro_gateway import PyroControllerNodeProxy, PyroControllerNodeWrapper
 from src.adapters.sqlite_repository import SqliteRepository
-from src.domain.interfaces import IBrokerClient, IControllerNode
+from src.domain.interfaces import BrokerClient, ControllerNode
 from src.use_cases.controller_service import ControllerService
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] (Controller-%(name)s) %(message)s")
@@ -29,8 +27,8 @@ def build_controller(
     is_primary: bool = False,
     is_corrupt: bool = False,
     db_path: Optional[str] = None,
-    broker_client: Optional[IBrokerClient] = None,
-    peer_proxies: Optional[Iterable[IControllerNode]] = None,
+    broker_client: Optional[BrokerClient] = None,
+    peer_proxies: Optional[Iterable[ControllerNode]] = None,
 ) -> ControllerService:
     """Instantiates repository, broker, autonomous controller service and synchronizes boot."""
     database_file = db_path or f"node_{node_id}.db"
@@ -75,7 +73,6 @@ def main() -> None:
     logger = logging.getLogger(f"Node{args.id}")
     logger.info("Iniciando Controlador %d (Primary=%s, Corrupt=%s) na porta Pyro5 %d", args.id, args.primary, args.corrupt, port)
 
-    # Discover peer ports for boot synchronization
     peer_ids = [nid for nid in [1, 2, 3] if nid != args.id]
     peer_proxies = [
         PyroControllerNodeProxy(f"PYRO:petcare.controller.{pid}@localhost:{9090 + pid}")

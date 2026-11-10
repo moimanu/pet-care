@@ -1,11 +1,9 @@
 from __future__ import annotations
 
 import argparse
-from dataclasses import asdict
 import logging
 from pathlib import Path
 import sys
-from typing import Any, Mapping
 
 # Ensure project root is in sys.path when executed directly as a script
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -14,83 +12,15 @@ if str(_PROJECT_ROOT) not in sys.path:
 
 import Pyro5.api
 
-from src.adapters.pyro_gateway import PyroControllerNodeProxy
-
-from src.domain.interfaces import IControllerNode
+from src.adapters.pyro_gateway import PyroControllerNodeProxy, PyroMiddlewareWrapper
+from src.domain.interfaces import ControllerNode
 from src.use_cases.middleware_service import MiddlewareService
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] (Middleware) %(message)s")
 logger = logging.getLogger("Middleware")
 
 
-@Pyro5.api.expose
-class PyroMiddlewareWrapper:
-    """Pyro5 exposable interface consumed by client CLI dashboard."""
-
-    def __init__(self, middleware: MiddlewareService) -> None:
-        self._middleware = middleware
-
-    def get_pet_status(self) -> dict[str, Any]:
-        try:
-            state = self._middleware.get_consensus_state()
-            data = asdict(state)
-            data["hash"] = state.state_hash()
-            return {"sucesso": True, "estado": data}
-        except Exception as exc:
-            logger.warning("Falha ao obter estado por quórum: %s", exc)
-            return {"sucesso": False, "mensagem": str(exc), "estado": None}
-
-    def dispensar_racao(self, quantidade: float = 50.0) -> dict[str, Any]:
-        try:
-            result = self._middleware.dispensar_racao(float(quantidade))
-            return {
-                "sucesso": result.sucesso,
-                "mensagem": result.mensagem,
-                "estado": asdict(result.estado) if result.estado else None,
-            }
-        except Exception as exc:
-            logger.warning("Falha ao dispensar ração: %s", exc)
-            return {"sucesso": False, "mensagem": str(exc), "estado": None}
-
-    def repor_agua(self, quantidade: float = 200.0) -> dict[str, Any]:
-        try:
-            result = self._middleware.repor_agua(float(quantidade))
-            return {
-                "sucesso": result.sucesso,
-                "mensagem": result.mensagem,
-                "estado": asdict(result.estado) if result.estado else None,
-            }
-        except Exception as exc:
-            logger.warning("Falha ao repor água: %s", exc)
-            return {"sucesso": False, "mensagem": str(exc), "estado": None}
-
-    def resetar_areia(self) -> dict[str, Any]:
-        try:
-            result = self._middleware.resetar_areia()
-            return {
-                "sucesso": result.sucesso,
-                "mensagem": result.mensagem,
-                "estado": asdict(result.estado) if result.estado else None,
-            }
-        except Exception as exc:
-            logger.warning("Falha ao resetar areia: %s", exc)
-            return {"sucesso": False, "mensagem": str(exc), "estado": None}
-
-    def silenciar_alarme(self) -> dict[str, Any]:
-        try:
-            result = self._middleware.silenciar_alarme()
-            return {
-                "sucesso": result.sucesso,
-                "mensagem": result.mensagem,
-                "estado": asdict(result.estado) if result.estado else None,
-            }
-        except Exception as exc:
-            logger.warning("Falha ao silenciar alarme: %s", exc)
-            return {"sucesso": False, "mensagem": str(exc), "estado": None}
-
-
-
-def build_middleware(nodes: Mapping[int, IControllerNode], timeout: float = 1.0) -> MiddlewareService:
+def build_middleware(nodes: dict[int, ControllerNode], timeout: float = 1.0) -> MiddlewareService:
     return MiddlewareService(nodes=nodes, timeout=timeout)
 
 
@@ -102,7 +32,7 @@ def main() -> None:
     parser.add_argument("--node3", default="PYRO:petcare.controller.3@localhost:9093", help="URI do Nó 3")
     args = parser.parse_args()
 
-    nodes: dict[int, IControllerNode] = {
+    nodes: dict[int, ControllerNode] = {
         1: PyroControllerNodeProxy(args.node1),
         2: PyroControllerNodeProxy(args.node2),
         3: PyroControllerNodeProxy(args.node3),

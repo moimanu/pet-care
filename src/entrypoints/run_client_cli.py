@@ -1,10 +1,8 @@
 from __future__ import annotations
 
 import argparse
-import sys
-from typing import Any
+from typing import Any, Callable
 import Pyro5.api
-import Pyro5.errors
 
 
 class ClientCLI:
@@ -32,7 +30,7 @@ class ClientCLI:
                 print(f"[ERRO] {res.get('mensagem', 'Falha ao consultar estado')}")
                 return
 
-            status = res.get("estado") if (isinstance(res, dict) and "estado" in res and res.get("estado") is not None) else res
+            status = res.get("estado") if (isinstance(res, dict) and res.get("estado") is not None) else res
             print("\n----- STATUS GERAL DO PET (QUÓRUM BIZANTINO) -----")
             print(f" • Ração Disponível : {status.get('racao_gramas', 0.0):.1f} g")
             print(f" • Água Disponível  : {status.get('agua_ml', 0.0):.1f} ml")
@@ -45,36 +43,26 @@ class ClientCLI:
         except Exception as exc:
             print(f"[ERRO] Falha ao consultar estado consolidado: {exc}")
 
+    def _invoke(self, action_fn: Callable[[], dict[str, Any]], error_msg: str) -> None:
+        try:
+            res = action_fn()
+            print(f"[{'SUCESSO' if res.get('sucesso') else 'FALHA'}] {res.get('mensagem')}")
+        except Exception as exc:
+            print(f"[ERRO] {error_msg}: {exc}")
 
     def dispense_food(self, qty_str: str = "50") -> None:
-        try:
-            qty = float(qty_str) if qty_str.strip() else 50.0
-            res = self.middleware.dispensar_racao(qty)
-            print(f"[{'SUCESSO' if res.get('sucesso') else 'FALHA'}] {res.get('mensagem')}")
-        except Exception as exc:
-            print(f"[ERRO] Falha ao dispensar ração: {exc}")
+        qty = float(qty_str) if qty_str.strip() else 50.0
+        self._invoke(lambda: self.middleware.dispensar_racao(qty), "Falha ao dispensar ração")
 
     def refill_water(self, qty_str: str = "200") -> None:
-        try:
-            qty = float(qty_str) if qty_str.strip() else 200.0
-            res = self.middleware.repor_agua(qty)
-            print(f"[{'SUCESSO' if res.get('sucesso') else 'FALHA'}] {res.get('mensagem')}")
-        except Exception as exc:
-            print(f"[ERRO] Falha ao repor água: {exc}")
+        qty = float(qty_str) if qty_str.strip() else 200.0
+        self._invoke(lambda: self.middleware.repor_agua(qty), "Falha ao repor água")
 
     def reset_litter(self) -> None:
-        try:
-            res = self.middleware.resetar_areia()
-            print(f"[{'SUCESSO' if res.get('sucesso') else 'FALHA'}] {res.get('mensagem')}")
-        except Exception as exc:
-            print(f"[ERRO] Falha ao resetar areia: {exc}")
+        self._invoke(self.middleware.resetar_areia, "Falha ao resetar areia")
 
     def silence_alarm(self) -> None:
-        try:
-            res = self.middleware.silenciar_alarme()
-            print(f"[{'SUCESSO' if res.get('sucesso') else 'FALHA'}] {res.get('mensagem')}")
-        except Exception as exc:
-            print(f"[ERRO] Falha ao silenciar alarme: {exc}")
+        self._invoke(self.middleware.silenciar_alarme, "Falha ao silenciar alarme")
 
     def handle_option(self, option: str) -> bool:
         opt = option.strip()
