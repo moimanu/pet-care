@@ -77,3 +77,56 @@ def test_controller_discards_invalid_telemetry_without_db_modification():
     current_state = repo.get_state()
     assert current_state.agua_ml == saved_state.agua_ml
     assert current_state.racao_gramas == 200.0
+
+
+def test_primary_controller_triggers_autonomous_actuation():
+    repo = MockRepository()
+    broker = MockBroker()
+    service = ControllerService(node_id=1, repository=repo, broker=broker, is_primary=True)
+
+    # Low food triggers dispenser
+    service.handle_telemetry("petcare/sensores/racao", {"nivel_gramas": 30.0, "timestamp": "2026-11-10T15:00:00Z"})
+    assert len(broker.published) == 1
+    topic, payload, qos = broker.published[0]
+    assert topic == "petcare/atuadores/dispenser"
+    assert payload["acao"] == "LIBERAR_RACAO"
+    assert payload["quantidade_gramas"] == 50.0
+    assert qos == 2
+
+    # Low water triggers valve
+    service.handle_telemetry("petcare/sensores/agua", {"nivel_ml": 100.0, "timestamp": "2026-11-10T15:01:00Z"})
+    assert len(broker.published) == 2
+    topic, payload, qos = broker.published[1]
+    assert topic == "petcare/atuadores/valvula"
+    assert payload["acao"] == "REPOR_AGUA"
+    assert payload["quantidade_ml"] == 200.0
+    assert qos == 2
+
+    # Fuga FORA triggers alarm and activates alarm in state
+    service.handle_telemetry("petcare/sensores/fuga", {"perimetro": "FORA", "timestamp": "2026-11-10T15:02:00Z"})
+    assert len(broker.published) == 3
+    topic, payload, qos = broker.published[2]
+    assert topic == "petcare/atuadores/alarme"
+    assert payload["acao"] == "DISPARAR_ALARME"
+    assert payload["motivo"] == "FUGA_DETECTADA"
+    assert repo.get_state().alarme_ativo is True
+
+
+def test_secondary_replica_does_not_publish_actuation_to_broker():
+    repo = MockRepository()
+    broker = MockBroker()
+    service = ControllerService(node_id=2, repository=repo, broker=broker, is_primary=False)
+
+    service.handle_telemetry("petcare/sensores/racao", {"nivel_gramas": 20.0, "timestamp": "2026-11-10T15:00:00Z"})
+    service.handle_telemetry("petcare/sensores/agua", {"nivel_ml": 50.0, "timestamp": "2026-11-10T15:01:00Z"})
+    service.handle_telemetry("petcare/sensores/fuga", {"perimetro": "FORA", "timestamp": "2026-11-10T15:02:00Z"})
+
+    # Broker must receive zero messages from secondary node
+    assert len(broker.published) == 0
+    # But local state is updated
+    state = repo.get_state()
+    assert state.racao_gramas == 20.0
+    assert state.agua_ml == 50.0
+    assert state.status_fuga == "FORA"
+    assert state.alarme_ativo is True
+

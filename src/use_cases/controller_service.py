@@ -83,14 +83,47 @@ class ControllerService:
 
         if sensor == "racao":
             racao_gramas = float(payload["nivel_gramas"])
+            if racao_gramas < 50.0 and self.is_primary():
+                self.broker.publish(
+                    self.TOPIC_RACAO_ATUADOR,
+                    {
+                        "acao": "LIBERAR_RACAO",
+                        "quantidade_gramas": 50.0,
+                        "command_id": str(uuid.uuid4()),
+                    },
+                    qos=2,
+                )
         elif sensor == "agua":
             agua_ml = float(payload["nivel_ml"])
+            if agua_ml < 150.0 and self.is_primary():
+                self.broker.publish(
+                    self.TOPIC_AGUA_ATUADOR,
+                    {
+                        "acao": "REPOR_AGUA",
+                        "quantidade_ml": 200.0,
+                        "command_id": str(uuid.uuid4()),
+                    },
+                    qos=2,
+                )
         elif sensor == "areia":
             areia_usos = int(payload["usos_acumulados"])
         elif sensor == "fuga":
             status_fuga = str(payload["perimetro"]).strip().upper()
+            if status_fuga == "FORA" and not alarme_ativo:
+                alarme_ativo = True
+                if self.is_primary():
+                    self.broker.publish(
+                        self.TOPIC_ALARME_ATUADOR,
+                        {
+                            "acao": "DISPARAR_ALARME",
+                            "motivo": "FUGA_DETECTADA",
+                            "command_id": str(uuid.uuid4()),
+                        },
+                        qos=2,
+                    )
 
         new_state = PetState(
+
             racao_gramas=racao_gramas,
             agua_ml=agua_ml,
             areia_usos=areia_usos,
