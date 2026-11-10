@@ -3,13 +3,14 @@ from __future__ import annotations
 from dataclasses import asdict
 import logging
 import threading
-from typing import Any, Mapping, Optional
+from typing import Any, Callable, Mapping, Optional
 import Pyro5.api
 import Pyro5.errors
 
 from src.domain.entities import Command, CommandResult, PetState
 from src.domain.exceptions import DomainError, NodeUnreachableError, QuorumError, SanityError
-from src.domain.interfaces import IControllerNode
+from src.domain.interfaces import ControllerNode
+from src.use_cases.middleware_service import MiddlewareService
 
 logger = logging.getLogger(__name__)
 
@@ -21,17 +22,15 @@ for _exc in (DomainError, NodeUnreachableError, QuorumError, SanityError):
     )
 
 
-
 @Pyro5.api.expose
 class PyroControllerNodeWrapper:
     """Pyro5 exposable RPC wrapper translating raw RPC dictionaries to domain types."""
 
-    def __init__(self, node: IControllerNode) -> None:
+    def __init__(self, node: ControllerNode) -> None:
         self._node = node
 
     def get_state(self) -> dict[str, Any]:
-        state = self._node.get_state()
-        return asdict(state)
+        return asdict(self._node.get_state())
 
     def execute_command(self, cmd_dict: Mapping[str, Any]) -> dict[str, Any]:
         cmd = Command(
@@ -55,7 +54,7 @@ class PyroControllerNodeWrapper:
 
 
 class PyroControllerNodeProxy:
-    """Client proxy implementing IControllerNode with translation of network errors."""
+    """Client proxy implementing ControllerNode with translation of network errors."""
 
     def __init__(self, uri: str = "", raw_proxy: Optional[Any] = None) -> None:
         self._uri = uri
@@ -71,47 +70,63 @@ class PyroControllerNodeProxy:
 
     def _call(self, func_name: str, *args: Any, **kwargs: Any) -> Any:
         try:
-            proxy = self._get_proxy()
-            method = getattr(proxy, func_name)
-            return method(*args, **kwargs)
-        except (Pyro5.errors.CommunicationError, Pyro5.errors.TimeoutError, Exception) as exc:
+            return getattr(self._get_proxy(), func_name)(*args, **kwargs)
+        except Exception as exc:
             logger.warning("RPC failure invoking %s on %s: %s", func_name, self._uri, exc)
             raise NodeUnreachableError(f"RPC failure on node {self._uri}: {exc}") from exc
 
-
     def get_state(self) -> PetState:
-        data = self._call("get_state")
-        return PetState(
-            racao_gramas=float(data["racao_gramas"]),
-            agua_ml=float(data["agua_ml"]),
-            areia_usos=int(data["areia_usos"]),
-            status_fuga=str(data["status_fuga"]),
-            alarme_ativo=bool(data["alarme_ativo"]),
-            atualizado_em=str(data["atualizado_em"]),
-        )
+        return PetState.from_mapping(self._call("get_state"))
 
     def execute_command(self, command: Command) -> CommandResult:
-        cmd_dict = asdict(command)
-        res = self._call("execute_command", cmd_dict)
-        state_dict = res.get("estado")
-        state: Optional[PetState] = None
-        if state_dict is not None:
-            state = PetState(
-                racao_gramas=float(state_dict["racao_gramas"]),
-                agua_ml=float(state_dict["agua_ml"]),
-                areia_usos=int(state_dict["areia_usos"]),
-                status_fuga=str(state_dict["status_fuga"]),
-                alarme_ativo=bool(state_dict["alarme_ativo"]),
-                atualizado_em=str(state_dict["atualizado_em"]),
-            )
-        return CommandResult(
-            sucesso=bool(res["sucesso"]),
-            mensagem=str(res["mensagem"]),
-            estado=state,
-        )
+        res = self._call("execute_command", asdict(command))
+        state = PetState.from_mapping(res["estado"]) if res.get("estado") else None
+        return CommandResult(sucesso=bool(res["sucesso"]), mensagem=str(res["mensagem"]), estado=state)
 
     def is_primary(self) -> bool:
         return bool(self._call("is_primary"))
 
     def set_primary(self, primary: bool) -> None:
         self._call("set_primary", bool(primary))
+
+
+@Pyro5.api.expose
+class PyroMiddlewareWrapper:
+    """Pyro5 exposable interface consumed by client CLI dashboard."""
+
+    def __init__(self, middleware: MiddlewareService) -> None:
+        self._middleware = middleware
+
+    def _execute(self, action_fn: Callable[[], CommandResult], label: str) -> dict[str, Any]:
+        try:
+            result = action_fn()
+            return {
+                "sucesso": result.sucesso,
+                "mensagem": result.mensagem,
+                "estado": asdict(result.estado) if result.estado else None,
+            }
+        except Exception as exc:
+            logger.warning("Falha ao %s: %s", label, exc)
+            return {"sucesso": False, "mensagem": str(exc), "estado": None}
+
+    def get_pet_status(self) -> dict[str, Any]:
+        try:
+            state = self._middleware.get_consensus_state()
+            data = asdict(state)
+            data["hash"] = state.state_hash()
+            return {"sucesso": True, "estado": data}
+        except Exception as exc:
+            logger.warning("Falha ao obter estado por quórum: %s", exc)
+            return {"sucesso": False, "mensagem": str(exc), "estado": None}
+
+    def dispensar_racao(self, quantidade: float = 50.0) -> dict[str, Any]:
+        return self._execute(lambda: self._middleware.dispensar_racao(float(quantidade)), "dispensar ração")
+
+    def repor_agua(self, quantidade: float = 200.0) -> dict[str, Any]:
+        return self._execute(lambda: self._middleware.repor_agua(float(quantidade)), "repor água")
+
+    def resetar_areia(self) -> dict[str, Any]:
+        return self._execute(self._middleware.resetar_areia, "resetar areia")
+
+    def silenciar_alarme(self) -> dict[str, Any]:
+        return self._execute(self._middleware.silenciar_alarme, "silenciar alarme")
