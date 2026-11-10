@@ -1,6 +1,4 @@
-import os
 import tempfile
-import pytest
 
 from scripts.run_audit_suite import (
     run_scenario_1_nominal,
@@ -40,4 +38,3 @@ def test_scenario_3_byzantine_fault():
         assert res["success"] is True
         assert res["byzantine_detected"] is True
         assert res["consensus_status_fuga"] == "DENTRO"
-

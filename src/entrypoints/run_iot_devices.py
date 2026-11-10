@@ -15,8 +15,8 @@ if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
 from src.adapters.mqtt_client import MqttClient
-from src.domain.interfaces import IBrokerClient
-
+from src.domain.interfaces import BrokerClient
+from src.domain.validators import TelemetrySanityValidator
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] (IoT Edge) %(message)s")
 logger = logging.getLogger("IoTDevices")
@@ -33,7 +33,7 @@ class IoTDeviceSimulator:
 
     def __init__(
         self,
-        broker: IBrokerClient,
+        broker: BrokerClient,
         interval: float = 3.0,
         cache_window_seconds: float = 2.0,
     ) -> None:
@@ -81,19 +81,18 @@ class IoTDeviceSimulator:
 
             if "dispenser" in topic or acao == "LIBERAR_RACAO":
                 qty = float(payload.get("quantidade_gramas", 50.0))
-                self.racao_gramas = min(500.0, self.racao_gramas + qty)
+                self.racao_gramas = min(TelemetrySanityValidator.MAX_RACAO_GRAMAS, self.racao_gramas + qty)
                 logger.info("[Atuador Dispenser] +%.1fg ração liberada! Nível: %.1fg", qty, self.racao_gramas)
 
             elif "valvula" in topic or acao == "REPOR_AGUA":
                 qty = float(payload.get("quantidade_ml", 200.0))
-                self.agua_ml = min(1000.0, self.agua_ml + qty)
+                self.agua_ml = min(TelemetrySanityValidator.MAX_AGUA_ML, self.agua_ml + qty)
                 logger.info("[Atuador Válvula] +%.1fml água reposta! Nível: %.1fml", qty, self.agua_ml)
 
             elif "alarme" in topic or "ALARME" in acao:
                 if acao == "DISPARAR_ALARME":
                     self.alarme_ativo = True
-                    motivo = payload.get("motivo", "ALERTA")
-                    logger.warning("[Atuador Alarme] BUZZER ATIVADO! Motivo: %s", motivo)
+                    logger.warning("[Atuador Alarme] BUZZER ATIVADO! Motivo: %s", payload.get("motivo", "ALERTA"))
                 elif acao == "SILENCIAR_ALARME":
                     self.alarme_ativo = False
                     logger.info("[Atuador Alarme] Alarme silenciado.")
@@ -105,42 +104,18 @@ class IoTDeviceSimulator:
         now_iso = datetime.now(timezone.utc).isoformat()
 
         with self._lock:
-            # Simulate natural consumption
             self.racao_gramas = max(0.0, self.racao_gramas - 1.5)
             self.agua_ml = max(0.0, self.agua_ml - 3.0)
 
-            racao_val = round(self.racao_gramas, 1)
-            agua_val = round(self.agua_ml, 1)
-            areia_val = self.areia_usos
-            fuga_val = self.perimetro
+            telemetry_data = [
+                (self.TOPIC_SENSORES_RACAO, {"nivel_gramas": round(self.racao_gramas, 1), "timestamp": now_iso}),
+                (self.TOPIC_SENSORES_AGUA, {"nivel_ml": round(self.agua_ml, 1), "timestamp": now_iso}),
+                (self.TOPIC_SENSORES_AREIA, {"usos_acumulados": self.areia_usos, "timestamp": now_iso}),
+                (self.TOPIC_SENSORES_FUGA, {"perimetro": self.perimetro, "timestamp": now_iso}),
+            ]
 
-        self.broker.publish(
-            self.TOPIC_SENSORES_RACAO,
-            {"nivel_gramas": racao_val, "timestamp": now_iso},
-            qos=1,
-        )
-        self.broker.publish(
-            self.TOPIC_SENSORES_AGUA,
-            {"nivel_ml": agua_val, "timestamp": now_iso},
-            qos=1,
-        )
-        self.broker.publish(
-            self.TOPIC_SENSORES_AREIA,
-            {"usos_acumulados": areia_val, "timestamp": now_iso},
-            qos=1,
-        )
-        self.broker.publish(
-            self.TOPIC_SENSORES_FUGA,
-            {"perimetro": fuga_val, "timestamp": now_iso},
-            qos=1,
-        )
-        logger.debug(
-            "[Sensores] Telemetria emitida: Racao=%.1fg, Agua=%.1fml, Areia=%d, Fuga=%s",
-            racao_val,
-            agua_val,
-            areia_val,
-            fuga_val,
-        )
+        for topic, payload in telemetry_data:
+            self.broker.publish(topic, payload, qos=1)
 
     def _sensor_loop(self) -> None:
         while self._running:
