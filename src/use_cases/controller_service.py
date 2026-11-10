@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+import json
 import logging
-from typing import Any, Mapping, Optional
+from typing import Any, Iterable, Mapping, Optional
 import uuid
 
 from src.domain.entities import Command, CommandResult, PetState
@@ -123,7 +124,6 @@ class ControllerService:
                     )
 
         new_state = PetState(
-
             racao_gramas=racao_gramas,
             agua_ml=agua_ml,
             areia_usos=areia_usos,
@@ -132,3 +132,99 @@ class ControllerService:
             atualizado_em=timestamp,
         )
         self.repository.save_state(new_state)
+
+    def execute_command(self, command: Command) -> CommandResult:
+        """Executes a command idempotently with event recording and actuation."""
+        if self.repository.has_event(command.command_id):
+            return CommandResult(
+                sucesso=True,
+                mensagem=f"Comando idempotente ja processado: {command.command_id}",
+                estado=self.get_state(),
+            )
+
+        current = self.get_state()
+        racao = current.racao_gramas
+        agua = current.agua_ml
+        areia = current.areia_usos
+        status_fuga = current.status_fuga
+        alarme = current.alarme_ativo
+        timestamp = command.timestamp or current.atualizado_em
+
+        acao = command.acao.strip().upper()
+
+        if acao == "LIBERAR_RACAO":
+            qty = float(command.parametros.get("quantidade_gramas", 50.0))
+            racao = min(500.0, racao + qty)
+            if self.is_primary():
+                self.broker.publish(
+                    self.TOPIC_RACAO_ATUADOR,
+                    {
+                        "acao": "LIBERAR_RACAO",
+                        "quantidade_gramas": qty,
+                        "command_id": command.command_id,
+                    },
+                    qos=2,
+                )
+        elif acao == "REPOR_AGUA":
+            qty = float(command.parametros.get("quantidade_ml", 200.0))
+            agua = min(1000.0, agua + qty)
+            if self.is_primary():
+                self.broker.publish(
+                    self.TOPIC_AGUA_ATUADOR,
+                    {
+                        "acao": "REPOR_AGUA",
+                        "quantidade_ml": qty,
+                        "command_id": command.command_id,
+                    },
+                    qos=2,
+                )
+        elif acao == "RESETAR_AREIA":
+            areia = 0
+        elif acao == "SILENCIAR_ALARME":
+            alarme = False
+            if self.is_primary():
+                self.broker.publish(
+                    self.TOPIC_ALARME_ATUADOR,
+                    {
+                        "acao": "SILENCIAR_ALARME",
+                        "command_id": command.command_id,
+                    },
+                    qos=2,
+                )
+
+        new_state = PetState(
+            racao_gramas=racao,
+            agua_ml=agua,
+            areia_usos=areia,
+            status_fuga=status_fuga,
+            alarme_ativo=alarme,
+            atualizado_em=timestamp,
+        )
+        self.repository.save_state(new_state)
+        self.repository.record_event(
+            command_id=command.command_id,
+            tipo_evento=acao,
+            payload=json.dumps(command.parametros),
+            registrado_em=timestamp,
+        )
+
+        return CommandResult(
+            sucesso=True,
+            mensagem=f"Acao {acao} executada com sucesso",
+            estado=new_state,
+        )
+
+    def sync_boot_state(self, peers: Iterable[Any]) -> None:
+        """Clones canonical state from online peers if local repository is uninitialized."""
+        if self.repository.get_state() is not None:
+            return
+
+        for peer in peers:
+            try:
+                peer_state = peer.get_state()
+                if peer_state is not None:
+                    self.repository.save_state(peer_state)
+                    logger.info("Node %s synchronized boot state from peer", self.node_id)
+                    break
+            except Exception as exc:
+                logger.warning("Node %s failed to sync state from peer: %s", self.node_id, exc)

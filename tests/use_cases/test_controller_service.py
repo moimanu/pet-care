@@ -130,3 +130,83 @@ def test_secondary_replica_does_not_publish_actuation_to_broker():
     assert state.status_fuga == "FORA"
     assert state.alarme_ativo is True
 
+
+def test_controller_executes_command_idempotently():
+    repo = MockRepository()
+    broker = MockBroker()
+    service = ControllerService(node_id=1, repository=repo, broker=broker, is_primary=True)
+
+    # Initial state
+    initial_state = PetState(
+        racao_gramas=100.0,
+        agua_ml=200.0,
+        areia_usos=5,
+        status_fuga="FORA",
+        alarme_ativo=True,
+        atualizado_em="2026-11-10T15:00:00Z",
+    )
+    repo.save_state(initial_state)
+
+    from src.domain.entities import Command
+    cmd_silenciar = Command(
+        command_id="cmd-uuid-1",
+        acao="SILENCIAR_ALARME",
+        parametros={},
+        timestamp="2026-11-10T15:05:00Z",
+    )
+
+    result1 = service.execute_command(cmd_silenciar)
+    assert result1.sucesso is True
+    assert result1.estado.alarme_ativo is False
+    assert repo.has_event("cmd-uuid-1")
+
+    # Duplicate execution returns idempotent success without reprocessing
+    result2 = service.execute_command(cmd_silenciar)
+    assert result2.sucesso is True
+    assert "idempotente" in result2.mensagem.lower()
+
+
+def test_controller_sync_boot_state_from_peers_when_local_empty():
+    repo = MockRepository(initial_state=None)
+    broker = MockBroker()
+    service = ControllerService(node_id=1, repository=repo, broker=broker)
+
+    class PeerMockNode:
+        def __init__(self, state: PetState):
+            self._state = state
+
+        def get_state(self) -> PetState:
+            return self._state
+
+        def execute_command(self, cmd):
+            pass
+
+        def is_primary(self):
+            return False
+
+        def set_primary(self, primary):
+            pass
+
+    peer_state = PetState(
+        racao_gramas=250.0,
+        agua_ml=500.0,
+        areia_usos=1,
+        status_fuga="DENTRO",
+        alarme_ativo=False,
+        atualizado_em="2026-11-10T15:00:00Z",
+    )
+    peer = PeerMockNode(peer_state)
+
+    service.sync_boot_state([peer])
+    assert repo.get_state() == peer_state
+
+
+def test_controller_service_implements_icontroller_node():
+    from src.domain.interfaces import IControllerNode
+    repo = MockRepository()
+    broker = MockBroker()
+    service = ControllerService(node_id=1, repository=repo, broker=broker)
+    assert isinstance(service, IControllerNode)
+
+
+
