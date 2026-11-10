@@ -72,3 +72,36 @@ def test_sqlite_repository_updates_existing_singleton_state(temp_db_path):
 
     current = repo.get_state()
     assert current == updated_state
+
+
+def test_sqlite_repository_records_event_with_idempotency(temp_db_path):
+    repo = SqliteRepository(temp_db_path)
+    assert not repo.has_event("cmd-100")
+
+    recorded_first = repo.record_event(
+        command_id="cmd-100",
+        tipo_evento="LIBERAR_RACAO",
+        payload='{"quantidade_gramas": 50.0}',
+        registrado_em="2026-11-10T15:10:00Z",
+    )
+    assert recorded_first is True
+    assert repo.has_event("cmd-100")
+
+    recorded_second = repo.record_event(
+        command_id="cmd-100",
+        tipo_evento="LIBERAR_RACAO",
+        payload='{"quantidade_gramas": 50.0}',
+        registrado_em="2026-11-10T15:10:05Z",
+    )
+    assert recorded_second is False
+
+
+def test_sqlite_repository_tracks_multiple_distinct_events(temp_db_path):
+    repo = SqliteRepository(temp_db_path)
+    repo.record_event("cmd-1", "REPOR_AGUA", "{}", "2026-11-10T15:10:00Z")
+    repo.record_event("cmd-2", "DISPARAR_ALARME", "{}", "2026-11-10T15:11:00Z")
+
+    assert repo.has_event("cmd-1")
+    assert repo.has_event("cmd-2")
+    assert not repo.has_event("cmd-3")
+
