@@ -73,9 +73,12 @@ def test_build_middleware_and_wrapper():
     assert isinstance(middleware, MiddlewareService)
 
     wrapper = PyroMiddlewareWrapper(middleware)
-    status = wrapper.get_pet_status()
+    status_res = wrapper.get_pet_status()
+    assert status_res["sucesso"] is True
+    status = status_res["estado"]
     assert status["racao_gramas"] == 100.0
     assert status["status_fuga"] == "DENTRO"
+
 
     res = wrapper.dispensar_racao(50.0)
     assert res["sucesso"] is True
@@ -92,4 +95,48 @@ def test_client_cli_methods():
     assert cli.handle_option("4") is True
     assert cli.handle_option("5") is True
     assert cli.handle_option("0") is False
+
+
+def test_full_real_pyro_pipeline(tmp_path):
+    import threading
+    import time
+    import Pyro5.api
+    from src.entrypoints.run_client_cli import ClientCLI
+    from src.adapters.pyro_gateway import PyroControllerNodeWrapper, PyroControllerNodeProxy
+
+    c1 = build_controller(1, is_primary=True, db_path=str(tmp_path / "n1.db"), broker_client=DummyBroker())
+    c2 = build_controller(2, is_primary=False, db_path=str(tmp_path / "n2.db"), broker_client=DummyBroker())
+    c3 = build_controller(3, is_primary=False, db_path=str(tmp_path / "n3.db"), broker_client=DummyBroker())
+
+    d1 = Pyro5.api.Daemon(port=19881)
+    d1.register(PyroControllerNodeWrapper(c1), "c1")
+    d2 = Pyro5.api.Daemon(port=19882)
+    d2.register(PyroControllerNodeWrapper(c2), "c2")
+    d3 = Pyro5.api.Daemon(port=19883)
+    d3.register(PyroControllerNodeWrapper(c3), "c3")
+
+    threading.Thread(target=d1.requestLoop, daemon=True).start()
+    threading.Thread(target=d2.requestLoop, daemon=True).start()
+    threading.Thread(target=d3.requestLoop, daemon=True).start()
+    time.sleep(0.1)
+
+    proxies = {
+        1: PyroControllerNodeProxy("PYRO:c1@localhost:19881"),
+        2: PyroControllerNodeProxy("PYRO:c2@localhost:19882"),
+        3: PyroControllerNodeProxy("PYRO:c3@localhost:19883"),
+    }
+
+    middleware = build_middleware(proxies)
+    d_mid = Pyro5.api.Daemon(port=19880)
+    d_mid.register(PyroMiddlewareWrapper(middleware), "mid")
+    threading.Thread(target=d_mid.requestLoop, daemon=True).start()
+    time.sleep(0.1)
+
+    client_proxy = Pyro5.api.Proxy("PYRO:mid@localhost:19880")
+    cli = ClientCLI(client_proxy)
+
+    assert cli.handle_option("1") is True
+    cli.dispense_food("50")
+    assert cli.handle_option("1") is True
+
 

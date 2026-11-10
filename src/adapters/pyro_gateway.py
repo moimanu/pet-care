@@ -2,15 +2,24 @@ from __future__ import annotations
 
 from dataclasses import asdict
 import logging
+import threading
 from typing import Any, Mapping, Optional
 import Pyro5.api
 import Pyro5.errors
 
 from src.domain.entities import Command, CommandResult, PetState
-from src.domain.exceptions import NodeUnreachableError
+from src.domain.exceptions import DomainError, NodeUnreachableError, QuorumError, SanityError
 from src.domain.interfaces import IControllerNode
 
 logger = logging.getLogger(__name__)
+
+# Register custom domain exceptions with Pyro5 deserializer to prevent SerializeError
+for _exc in (DomainError, NodeUnreachableError, QuorumError, SanityError):
+    _fullname = f"{_exc.__module__}.{_exc.__name__}"
+    Pyro5.api.register_dict_to_class(
+        _fullname, lambda classname, d, cls=_exc: cls(*d.get("args", ()))
+    )
+
 
 
 @Pyro5.api.expose
@@ -50,18 +59,25 @@ class PyroControllerNodeProxy:
 
     def __init__(self, uri: str = "", raw_proxy: Optional[Any] = None) -> None:
         self._uri = uri
-        if raw_proxy is not None:
-            self._proxy = raw_proxy
-        else:
-            self._proxy = Pyro5.api.Proxy(uri)
+        self._raw_proxy = raw_proxy
+        self._local = threading.local()
+
+    def _get_proxy(self) -> Any:
+        if self._raw_proxy is not None:
+            return self._raw_proxy
+        if not hasattr(self._local, "proxy"):
+            self._local.proxy = Pyro5.api.Proxy(self._uri)
+        return self._local.proxy
 
     def _call(self, func_name: str, *args: Any, **kwargs: Any) -> Any:
         try:
-            method = getattr(self._proxy, func_name)
+            proxy = self._get_proxy()
+            method = getattr(proxy, func_name)
             return method(*args, **kwargs)
         except (Pyro5.errors.CommunicationError, Pyro5.errors.TimeoutError, Exception) as exc:
             logger.warning("RPC failure invoking %s on %s: %s", func_name, self._uri, exc)
             raise NodeUnreachableError(f"RPC failure on node {self._uri}: {exc}") from exc
+
 
     def get_state(self) -> PetState:
         data = self._call("get_state")

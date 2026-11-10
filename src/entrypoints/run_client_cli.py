@@ -27,7 +27,12 @@ class ClientCLI:
 
     def view_status(self) -> None:
         try:
-            status = self.middleware.get_pet_status()
+            res = self.middleware.get_pet_status()
+            if isinstance(res, dict) and not res.get("sucesso", True):
+                print(f"[ERRO] {res.get('mensagem', 'Falha ao consultar estado')}")
+                return
+
+            status = res.get("estado") if (isinstance(res, dict) and "estado" in res and res.get("estado") is not None) else res
             print("\n----- STATUS GERAL DO PET (QUÓRUM BIZANTINO) -----")
             print(f" • Ração Disponível : {status.get('racao_gramas', 0.0):.1f} g")
             print(f" • Água Disponível  : {status.get('agua_ml', 0.0):.1f} ml")
@@ -39,6 +44,7 @@ class ClientCLI:
             print("--------------------------------------------------")
         except Exception as exc:
             print(f"[ERRO] Falha ao consultar estado consolidado: {exc}")
+
 
     def dispense_food(self, qty_str: str = "50") -> None:
         try:

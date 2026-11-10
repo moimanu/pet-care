@@ -38,9 +38,10 @@ echo "[4/6] Iniciando Controlador 3 (Réplica) na porta 9093..."
 $PYTHON src/entrypoints/run_controller.py --id 3 > logs/controller_3.log 2>&1 &
 PID_C3=$!
 
-sleep 1
+sleep 2
 
 echo "[5/6] Iniciando Middleware Pyro5 na porta 9090..."
+
 $PYTHON src/entrypoints/run_middleware.py > logs/middleware.log 2>&1 &
 PID_MID=$!
 

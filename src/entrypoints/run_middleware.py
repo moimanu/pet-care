@@ -31,42 +31,63 @@ class PyroMiddlewareWrapper:
         self._middleware = middleware
 
     def get_pet_status(self) -> dict[str, Any]:
-        state = self._middleware.get_consensus_state()
-        data = asdict(state)
-        data["hash"] = state.state_hash()
-        return data
+        try:
+            state = self._middleware.get_consensus_state()
+            data = asdict(state)
+            data["hash"] = state.state_hash()
+            return {"sucesso": True, "estado": data}
+        except Exception as exc:
+            logger.warning("Falha ao obter estado por quórum: %s", exc)
+            return {"sucesso": False, "mensagem": str(exc), "estado": None}
 
     def dispensar_racao(self, quantidade: float = 50.0) -> dict[str, Any]:
-        result = self._middleware.dispensar_racao(float(quantidade))
-        return {
-            "sucesso": result.sucesso,
-            "mensagem": result.mensagem,
-            "estado": asdict(result.estado) if result.estado else None,
-        }
+        try:
+            result = self._middleware.dispensar_racao(float(quantidade))
+            return {
+                "sucesso": result.sucesso,
+                "mensagem": result.mensagem,
+                "estado": asdict(result.estado) if result.estado else None,
+            }
+        except Exception as exc:
+            logger.warning("Falha ao dispensar ração: %s", exc)
+            return {"sucesso": False, "mensagem": str(exc), "estado": None}
 
     def repor_agua(self, quantidade: float = 200.0) -> dict[str, Any]:
-        result = self._middleware.repor_agua(float(quantidade))
-        return {
-            "sucesso": result.sucesso,
-            "mensagem": result.mensagem,
-            "estado": asdict(result.estado) if result.estado else None,
-        }
+        try:
+            result = self._middleware.repor_agua(float(quantidade))
+            return {
+                "sucesso": result.sucesso,
+                "mensagem": result.mensagem,
+                "estado": asdict(result.estado) if result.estado else None,
+            }
+        except Exception as exc:
+            logger.warning("Falha ao repor água: %s", exc)
+            return {"sucesso": False, "mensagem": str(exc), "estado": None}
 
     def resetar_areia(self) -> dict[str, Any]:
-        result = self._middleware.resetar_areia()
-        return {
-            "sucesso": result.sucesso,
-            "mensagem": result.mensagem,
-            "estado": asdict(result.estado) if result.estado else None,
-        }
+        try:
+            result = self._middleware.resetar_areia()
+            return {
+                "sucesso": result.sucesso,
+                "mensagem": result.mensagem,
+                "estado": asdict(result.estado) if result.estado else None,
+            }
+        except Exception as exc:
+            logger.warning("Falha ao resetar areia: %s", exc)
+            return {"sucesso": False, "mensagem": str(exc), "estado": None}
 
     def silenciar_alarme(self) -> dict[str, Any]:
-        result = self._middleware.silenciar_alarme()
-        return {
-            "sucesso": result.sucesso,
-            "mensagem": result.mensagem,
-            "estado": asdict(result.estado) if result.estado else None,
-        }
+        try:
+            result = self._middleware.silenciar_alarme()
+            return {
+                "sucesso": result.sucesso,
+                "mensagem": result.mensagem,
+                "estado": asdict(result.estado) if result.estado else None,
+            }
+        except Exception as exc:
+            logger.warning("Falha ao silenciar alarme: %s", exc)
+            return {"sucesso": False, "mensagem": str(exc), "estado": None}
+
 
 
 def build_middleware(nodes: Mapping[int, IControllerNode], timeout: float = 1.0) -> MiddlewareService:
