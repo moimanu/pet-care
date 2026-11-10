@@ -82,3 +82,36 @@ def test_middleware_byzantine_quorum_fails_when_majority_unreachable():
 
     with pytest.raises(QuorumError, match="Quorum"):
         middleware.get_consensus_state()
+
+
+def test_middleware_dispatches_command_with_uuid_and_replicates():
+    canonical_state = PetState(
+        racao_gramas=200.0,
+        agua_ml=500.0,
+        areia_usos=2,
+        status_fuga="DENTRO",
+        alarme_ativo=False,
+        atualizado_em="2026-11-10T15:00:00Z",
+    )
+    node1 = MockControllerNode(1, canonical_state, is_primary=True)
+    node2 = MockControllerNode(2, canonical_state, is_primary=False)
+    node3 = MockControllerNode(3, canonical_state, is_primary=False)
+
+    middleware = MiddlewareService({1: node1, 2: node2, 3: node3})
+
+    result = middleware.dispensar_racao(50.0)
+    assert result.sucesso is True
+
+    # Check all reachable nodes received the exact same command_id
+    assert len(node1.commands_received) == 1
+    assert len(node2.commands_received) == 1
+    assert len(node3.commands_received) == 1
+
+    cmd_id_1 = node1.commands_received[0].command_id
+    cmd_id_2 = node2.commands_received[0].command_id
+    cmd_id_3 = node3.commands_received[0].command_id
+
+    assert cmd_id_1 == cmd_id_2 == cmd_id_3
+    assert len(cmd_id_1) > 0
+    assert node1.commands_received[0].acao == "LIBERAR_RACAO"
+

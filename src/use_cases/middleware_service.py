@@ -67,3 +67,52 @@ class MiddlewareService:
             f"Quorum Byzantine não atingido: obtidas {len(responses)} respostas, "
             f"nenhum consenso >= {self.quorum_threshold} nós."
         )
+
+    def get_primary_node(self) -> tuple[int, IControllerNode]:
+        """Finds active primary node or falls back to first responsive node."""
+        for node_id, node in self.nodes.items():
+            try:
+                if node.is_primary():
+                    return node_id, node
+            except Exception:
+                continue
+
+        for node_id, node in self.nodes.items():
+            return node_id, node
+
+        raise NodeUnreachableError("Nenhum nó controlador disponível no Middleware")
+
+    def send_command(
+        self, acao: str, parametros: Optional[dict[str, Any]] = None
+    ) -> CommandResult:
+        """Dispatches an idempotent command to primary and replicates to peers."""
+        if parametros is None:
+            parametros = {}
+
+        command_id = str(uuid.uuid4())
+        command = Command(command_id=command_id, acao=acao, parametros=parametros)
+
+        primary_id, primary_node = self.get_primary_node()
+        result = primary_node.execute_command(command)
+
+        for node_id, node in self.nodes.items():
+            if node_id != primary_id:
+                try:
+                    node.execute_command(command)
+                except Exception as exc:
+                    logger.warning("Falha na replicacao do comando para o nó %s: %s", node_id, exc)
+
+        return result
+
+    def dispensar_racao(self, quantidade_gramas: float = 50.0) -> CommandResult:
+        return self.send_command("LIBERAR_RACAO", {"quantidade_gramas": float(quantidade_gramas)})
+
+    def repor_agua(self, quantidade_ml: float = 200.0) -> CommandResult:
+        return self.send_command("REPOR_AGUA", {"quantidade_ml": float(quantidade_ml)})
+
+    def resetar_areia(self) -> CommandResult:
+        return self.send_command("RESETAR_AREIA", {})
+
+    def silenciar_alarme(self) -> CommandResult:
+        return self.send_command("SILENCIAR_ALARME", {})
+
