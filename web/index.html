@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PetCare Distribuido - Painel de Controle</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="https://unpkg.com/lucide@latest"></script>
+</head>
+<body>
+  <header>
+    <div class="brand">
+      <i data-lucide="shield-check" aria-hidden="true"></i>
+      <span>PETCARE DISTRIBUIDO</span>
+      <span class="brand-badge">BFT 2f+1</span>
+    </div>
+    <div class="header-meta">
+      <div class="conn-indicator">
+        <span id="conn-dot" class="conn-dot offline"></span>
+        <span id="conn-text">Conectando SSE...</span>
+      </div>
+      <span id="last-sync-time">Ultima sincronizacao: --:--:--</span>
+    </div>
+  </header>
+
+  <main class="dashboard-grid">
+    <!-- MODULO 1: PAINEL DO TUTOR -->
+    <section class="col-panel" id="module-tutor" aria-labelledby="tutor-title">
+      <div class="panel-header">
+        <div class="panel-title" id="tutor-title">
+          <i data-lucide="user" aria-hidden="true"></i>
+          <span>Painel do Tutor</span>
+        </div>
+        <span class="badge badge-neutral" id="tutor-badge">Ativo</span>
+      </div>
+
+      <div class="panel-content">
+        <!-- Feedback alert -->
+        <div id="action-feedback" class="feedback-box"></div>
+
+        <!-- Telemetria do Pet -->
+        <div class="card">
+          <div class="card-title">
+            <span>Telemetria Consolidada</span>
+            <i data-lucide="activity" aria-hidden="true"></i>
+          </div>
+          <div class="metric-grid">
+            <div class="metric-item">
+              <div class="metric-label">
+                <i data-lucide="utensils" aria-hidden="true"></i>
+                <span>Racao</span>
+              </div>
+              <div class="metric-value"><span id="val-food">0.0</span><span class="metric-unit">g</span></div>
+            </div>
+            <div class="metric-item">
+              <div class="metric-label">
+                <i data-lucide="droplet" aria-hidden="true"></i>
+                <span>Agua</span>
+              </div>
+              <div class="metric-value"><span id="val-water">0.0</span><span class="metric-unit">ml</span></div>
+            </div>
+            <div class="metric-item">
+              <div class="metric-label">
+                <i data-lucide="box" aria-hidden="true"></i>
+                <span>Caixa Areia</span>
+              </div>
+              <div class="metric-value"><span id="val-litter">0</span><span class="metric-unit">usos</span></div>
+            </div>
+            <div class="metric-item">
+              <div class="metric-label">
+                <i data-lucide="map-pin" aria-hidden="true"></i>
+                <span>Perimetro</span>
+              </div>
+              <div class="metric-value" style="font-size: 14px; padding-top: 4px;">
+                <span id="val-perimeter" class="badge badge-neutral">--</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Estado do Alarme -->
+        <div class="card">
+          <div class="card-title">
+            <span>Seguranca e Perimetro</span>
+            <i data-lucide="bell" aria-hidden="true"></i>
+          </div>
+          <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;">
+            <span style="font-size: 11px; color: var(--muted);">Sirene de Fuga</span>
+            <span id="val-alarm" class="badge badge-neutral">DESARMADO</span>
+          </div>
+          <button id="btn-silence" class="btn btn-danger" style="width: 100%;" aria-label="Silenciar ou desarmar alarme">
+            <i data-lucide="volume-x" aria-hidden="true"></i>
+            <span>Silenciar / Desarmar Alarme</span>
+          </button>
+        </div>
+
+        <!-- Acoes Rapidas -->
+        <div class="card">
+          <div class="card-title">
+            <span>Acoes de Alimentacao</span>
+            <i data-lucide="sliders" aria-hidden="true"></i>
+          </div>
+          <div class="action-group">
+            <div class="input-row">
+              <input type="number" id="input-food-qty" class="input-text" value="50" min="1" step="5" placeholder="Gramas">
+              <button id="btn-dispense" class="btn btn-primary" aria-label="Dispensar racao">
+                <i data-lucide="plus" aria-hidden="true"></i>
+                <span>Dispensar</span>
+              </button>
+            </div>
+            <div class="input-row">
+              <input type="number" id="input-water-qty" class="input-text" value="200" min="1" step="10" placeholder="Mililitros">
+              <button id="btn-water" class="btn btn-primary" aria-label="Repor agua">
+                <i data-lucide="plus" aria-hidden="true"></i>
+                <span>Repor</span>
+              </button>
+            </div>
+            <button id="btn-clean-litter" class="btn" style="width: 100%;" aria-label="Registrar limpeza da caixa de areia">
+              <i data-lucide="rotate-ccw" aria-hidden="true"></i>
+              <span>Zerar Caixa de Areia</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- MODULO 2: OBSERVABILIDADE E LOGS -->
+    <section class="col-panel" id="module-logs" aria-labelledby="logs-title">
+      <div class="panel-header">
+        <div class="panel-title" id="logs-title">
+          <i data-lucide="terminal" aria-hidden="true"></i>
+          <span>Observabilidade e Logs</span>
+        </div>
+        <div style="display: flex; gap: 6px;">
+          <button id="btn-clear-logs" class="btn btn-sm" aria-label="Limpar console">
+            <i data-lucide="trash-2" aria-hidden="true"></i>
+            <span>Limpar</span>
+          </button>
+        </div>
+      </div>
+
+      <div class="panel-content" style="padding-bottom: 8px;">
+        <!-- Inspetor de Consenso Bizantino -->
+        <div class="card" style="padding: 10px;">
+          <div class="card-title">
+            <span>Inspetor Quorum Bizantino (2f+1)</span>
+            <span id="quorum-badge" class="badge badge-success">Consenso OK</span>
+          </div>
+          <div class="nodes-grid">
+            <div class="node-card" id="card-node-1">
+              <div class="node-header">
+                <span>No 1 (Lider)</span>
+                <span class="badge badge-neutral" id="badge-node-1">OK</span>
+              </div>
+              <div class="node-hash" id="hash-node-1">hash: --</div>
+            </div>
+            <div class="node-card" id="card-node-2">
+              <div class="node-header">
+                <span>No 2 (Replica)</span>
+                <span class="badge badge-neutral" id="badge-node-2">OK</span>
+              </div>
+              <div class="node-hash" id="hash-node-2">hash: --</div>
+            </div>
+            <div class="node-card" id="card-node-3">
+              <div class="node-header">
+                <span>No 3 (Replica)</span>
+                <span class="badge badge-neutral" id="badge-node-3">OK</span>
+              </div>
+              <div class="node-hash" id="hash-node-3">hash: --</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Terminal de Logs SSE -->
+        <div class="terminal-wrapper">
+          <div class="terminal-toolbar">
+            <div class="filter-group">
+              <button class="filter-btn active" data-filter="ALL">Todos</button>
+              <button class="filter-btn" data-filter="INFO">Info</button>
+              <button class="filter-btn" data-filter="WARN">Warn</button>
+              <button class="filter-btn" data-filter="ERROR">Error</button>
+            </div>
+            <span style="color: var(--muted); font-size: 10px;" id="log-count">0 entradas</span>
+          </div>
+          <div class="terminal-body" id="log-feed" role="log" aria-live="polite"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- MODULO 3: BANCADA DE TESTES E CENARIOS -->
+    <section class="col-panel" id="module-scenarios" aria-labelledby="scenarios-title">
+      <div class="panel-header">
+        <div class="panel-title" id="scenarios-title">
+          <i data-lucide="flask-conical" aria-hidden="true"></i>
+          <span>Bancada de Testes</span>
+        </div>
+        <span class="badge badge-neutral">Simulador</span>
+      </div>
+
+      <div class="panel-content">
+        <!-- Cenario 1: Nominal -->
+        <div class="scenario-item">
+          <div class="scenario-header">
+            <span class="scenario-title">Cenário 1: Replicacao Nominal</span>
+            <button class="btn btn-sm" id="btn-run-sc1" aria-label="Executar simulacao de replicacao nominal">
+              <i data-lucide="play" aria-hidden="true"></i>
+              <span>Testar</span>
+            </button>
+          </div>
+          <p class="scenario-desc">Difusao de telemetria nos 3 nos e verificacao de atuador unico na borda.</p>
+          <div class="scenario-res" id="res-sc1"></div>
+        </div>
+
+        <!-- Cenario 2: Failover -->
+        <div class="scenario-item">
+          <div class="scenario-header">
+            <span class="scenario-title">Cenário 2: Failover Crash-Stop</span>
+            <button class="btn btn-sm" id="btn-run-sc2" aria-label="Executar simulacao de failover do no lider">
+              <i data-lucide="play" aria-hidden="true"></i>
+              <span>Testar</span>
+            </button>
+          </div>
+          <p class="scenario-desc">Queda forcada do no primario e promocao transparente de replica a novo lider.</p>
+          <div class="scenario-res" id="res-sc2"></div>
+        </div>
+
+        <!-- Cenario 3: Bizantino -->
+        <div class="scenario-item">
+          <div class="scenario-header">
+            <span class="scenario-title">Cenário 3: Falha Bizantina</span>
+            <button class="btn btn-sm btn-danger" id="btn-run-sc3" aria-label="Executar simulacao de falha bizantina">
+              <i data-lucide="alert-triangle" aria-hidden="true"></i>
+              <span>Injetar</span>
+            </button>
+          </div>
+          <p class="scenario-desc">Corrupcao de estado do No 3 e descarte pelo quorum 2f+1 do Middleware.</p>
+          <div class="scenario-res" id="res-sc3"></div>
+        </div>
+
+        <!-- Cenario 4: Sanitizacao -->
+        <div class="scenario-item">
+          <div class="scenario-header">
+            <span class="scenario-title">Cenário 4: Sanitizacao de Borda</span>
+            <button class="btn btn-sm" id="btn-run-sc4" aria-label="Executar simulacao de rejeicao de telemetria anomala">
+              <i data-lucide="play" aria-hidden="true"></i>
+              <span>Testar</span>
+            </button>
+          </div>
+          <p class="scenario-desc">Envio de leitura corrompida (racao negativa) e rejeicao no validador.</p>
+          <div class="scenario-res" id="res-sc4"></div>
+        </div>
+
+        <!-- Cenario 5: Idempotencia -->
+        <div class="scenario-item">
+          <div class="scenario-header">
+            <span class="scenario-title">Cenário 5: Idempotencia UUID</span>
+            <button class="btn btn-sm" id="btn-run-sc5" aria-label="Executar simulacao de comando duplicado">
+              <i data-lucide="play" aria-hidden="true"></i>
+              <span>Testar</span>
+            </button>
+          </div>
+          <p class="scenario-desc">Disparo duplicado de comando com mesmo UUID e confirmacao de descarte.</p>
+          <div class="scenario-res" id="res-sc5"></div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
