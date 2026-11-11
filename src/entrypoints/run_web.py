@@ -7,7 +7,6 @@ import logging
 import os
 from pathlib import Path
 import sys
-import tempfile
 import threading
 import time
 from typing import Any, Callable, Optional
@@ -19,46 +18,11 @@ if str(_PROJECT_ROOT) not in sys.path:
 
 import Pyro5.api
 
-from scripts.run_audit_suite import (
-    AuditInMemoryBroker,
-    run_scenario_1_nominal,
-    run_scenario_2_failover,
-    run_scenario_3_byzantine,
-    run_scenario_4_sanitization,
-)
 from src.adapters.mqtt_client import MqttClient
 from src.adapters.pyro_gateway import PyroMiddlewareProxy
-from src.adapters.sqlite_repository import SqliteRepository
 from src.adapters.web_gateway import WebGateway, WebGatewayLogHandler
-from src.domain.entities import Command
-from src.use_cases.controller_service import ControllerService
 
 logger = logging.getLogger(__name__)
-
-
-def run_scenario_5_idempotency(tmpdir: str) -> dict[str, Any]:
-    """Cenário 5: Teste de Idempotência com envio repetido do mesmo command_id."""
-    broker = AuditInMemoryBroker()
-    db_path = os.path.join(tmpdir, "idempotency_node.db")
-    repo = SqliteRepository(db_path)
-    controller = ControllerService(node_id=1, repository=repo, broker=broker, is_primary=True)
-
-    cmd = Command(
-        command_id="cmd-idempotent-uuid-001",
-        acao="LIBERAR_RACAO",
-        parametros={"quantidade_gramas": 50.0},
-        timestamp="2026-11-10T15:00:00Z",
-    )
-
-    res1 = controller.execute_command(cmd)
-    res2 = controller.execute_command(cmd)
-
-    return {
-        "success": bool(res1.sucesso and res2.sucesso),
-        "duplicates_ignored": True,
-        "first_result": res1.mensagem,
-        "second_result": res2.mensagem,
-    }
 
 
 def make_mqtt_message_handler(gateway: WebGateway) -> Callable[[str, dict[str, Any]], None]:
@@ -85,29 +49,17 @@ def build_web_server(
     middleware: Optional[Any] = None,
     static_dir: Optional[str] = "web",
     logs_dir: Optional[str] = "logs",
+    mqtt_client: Optional[Any] = None,
 ) -> WebGateway:
-    """Configures and returns WebGateway with all REST, SSE and scenario routes."""
-    gateway = WebGateway(
+    """Configures and returns WebGateway with all REST and SSE routes."""
+    return WebGateway(
         host=host,
         port=port,
         middleware=middleware,
         static_dir=static_dir,
         logs_dir=logs_dir,
+        mqtt_client=mqtt_client,
     )
-
-    def _scenario_wrapper(fn: Callable[[str], dict[str, Any]]) -> Callable[[dict[str, Any]], dict[str, Any]]:
-        def handler(_body: dict[str, Any]) -> dict[str, Any]:
-            with tempfile.TemporaryDirectory(prefix="petcare_scenario_") as tmp:
-                return fn(tmp)
-        return handler
-
-    gateway.register_scenario("nominal", _scenario_wrapper(run_scenario_1_nominal))
-    gateway.register_scenario("failover", _scenario_wrapper(run_scenario_2_failover))
-    gateway.register_scenario("byzantine", _scenario_wrapper(run_scenario_3_byzantine))
-    gateway.register_scenario("sanitization", _scenario_wrapper(run_scenario_4_sanitization))
-    gateway.register_scenario("idempotency", _scenario_wrapper(run_scenario_5_idempotency))
-
-    return gateway
 
 
 def main() -> None:
@@ -150,6 +102,7 @@ def main() -> None:
         try:
             mqtt = MqttClient(host=args.mqtt_host, port=args.mqtt_port, client_id="petcare-web-gateway")
             mqtt.connect()
+            gateway.mqtt_client = mqtt
             handler = make_mqtt_message_handler(gateway)
             mqtt.subscribe("petcare/sensores/#", handler)
             mqtt.subscribe("petcare/atuadores/#", handler)

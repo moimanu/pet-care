@@ -29,22 +29,22 @@ class MockMiddleware:
         self.calls.append(("get_pet_status", None))
         return {"sucesso": True, "estado": self.state}
 
-    def dispensar_racao(self, quantidade: float = 50.0) -> dict[str, Any]:
+    def dispensar_racao(self, quantidade: float = 50.0, command_id: Optional[str] = None) -> dict[str, Any]:
         self.calls.append(("dispensar_racao", quantidade))
         self.state["racao_gramas"] += quantidade
         return {"sucesso": True, "mensagem": f"Dispensado {quantidade}g", "estado": self.state}
 
-    def repor_agua(self, quantidade: float = 200.0) -> dict[str, Any]:
+    def repor_agua(self, quantidade: float = 200.0, command_id: Optional[str] = None) -> dict[str, Any]:
         self.calls.append(("repor_agua", quantidade))
         self.state["agua_ml"] += quantidade
         return {"sucesso": True, "mensagem": f"Reposto {quantidade}ml", "estado": self.state}
 
-    def resetar_areia(self) -> dict[str, Any]:
+    def resetar_areia(self, command_id: Optional[str] = None) -> dict[str, Any]:
         self.calls.append(("resetar_areia", None))
         self.state["areia_usos"] = 0
         return {"sucesso": True, "mensagem": "Areia resetada", "estado": self.state}
 
-    def silenciar_alarme(self) -> dict[str, Any]:
+    def silenciar_alarme(self, command_id: Optional[str] = None) -> dict[str, Any]:
         self.calls.append(("silenciar_alarme", None))
         self.state["alarme_ativo"] = False
         return {"sucesso": True, "mensagem": "Alarme silenciado", "estado": self.state}
@@ -169,10 +169,14 @@ def test_web_gateway_log_handler(gateway):
     client_q = gateway.subscribe_sse()
     try:
         logger.info("Hello SSE Log")
-        msg = client_q.get(timeout=2.0)
-        assert msg.startswith("event: log\n")
-        assert "Hello SSE Log" in msg
-        assert "TestComp" in msg
+        msg_raw = client_q.get(timeout=2.0)
+        assert msg_raw.startswith("event: raw_log\n")
+        assert "Hello SSE Log" in msg_raw
+        assert "TestComp" in msg_raw
+
+        msg_log = client_q.get(timeout=2.0)
+        assert msg_log.startswith("event: log\n")
+        assert "Hello SSE Log" in msg_log
     finally:
         logger.removeHandler(handler)
         gateway.unsubscribe_sse(client_q)

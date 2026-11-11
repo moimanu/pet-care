@@ -52,6 +52,30 @@ class PyroControllerNodeWrapper:
     def set_primary(self, primary: bool) -> None:
         self._node.set_primary(bool(primary))
 
+    def is_corrupted(self) -> bool:
+        return bool(getattr(self._node, "is_corrupted", lambda: getattr(self._node, "is_corrupt", False))())
+
+    def set_corrupt(self, corrupt: bool) -> None:
+        if hasattr(self._node, "set_corrupt"):
+            self._node.set_corrupt(bool(corrupt))
+
+    def is_offline(self) -> bool:
+        return bool(getattr(self._node, "is_offline", lambda: False)())
+
+    def set_offline(self, offline: bool) -> None:
+        if hasattr(self._node, "set_offline"):
+            self._node.set_offline(bool(offline))
+
+    def get_info(self) -> dict[str, Any]:
+        if hasattr(self._node, "get_info"):
+            return dict(self._node.get_info())
+        return {
+            "id": getattr(self._node, "node_id", 0),
+            "primary": self.is_primary(),
+            "corrupt": self.is_corrupted(),
+            "offline": self.is_offline(),
+        }
+
 
 class PyroControllerNodeProxy:
     """Client proxy implementing ControllerNode with translation of network errors."""
@@ -89,6 +113,21 @@ class PyroControllerNodeProxy:
     def set_primary(self, primary: bool) -> None:
         self._call("set_primary", bool(primary))
 
+    def is_corrupted(self) -> bool:
+        return bool(self._call("is_corrupted"))
+
+    def set_corrupt(self, corrupt: bool) -> None:
+        self._call("set_corrupt", bool(corrupt))
+
+    def is_offline(self) -> bool:
+        return bool(self._call("is_offline"))
+
+    def set_offline(self, offline: bool) -> None:
+        self._call("set_offline", bool(offline))
+
+    def get_info(self) -> dict[str, Any]:
+        return dict(self._call("get_info"))
+
 
 @Pyro5.api.expose
 class PyroMiddlewareWrapper:
@@ -119,17 +158,34 @@ class PyroMiddlewareWrapper:
             logger.warning("Falha ao obter estado por quórum: %s", exc)
             return {"sucesso": False, "mensagem": str(exc), "estado": None}
 
-    def dispensar_racao(self, quantidade: float = 50.0) -> dict[str, Any]:
-        return self._execute(lambda: self._middleware.dispensar_racao(float(quantidade)), "dispensar ração")
+    def dispensar_racao(self, quantidade: float = 50.0, command_id: Optional[str] = None) -> dict[str, Any]:
+        return self._execute(
+            lambda: self._middleware.dispensar_racao(float(quantidade), command_id=command_id),
+            "dispensar ração",
+        )
 
-    def repor_agua(self, quantidade: float = 200.0) -> dict[str, Any]:
-        return self._execute(lambda: self._middleware.repor_agua(float(quantidade)), "repor água")
+    def repor_agua(self, quantidade: float = 200.0, command_id: Optional[str] = None) -> dict[str, Any]:
+        return self._execute(
+            lambda: self._middleware.repor_agua(float(quantidade), command_id=command_id),
+            "repor água",
+        )
 
-    def resetar_areia(self) -> dict[str, Any]:
-        return self._execute(self._middleware.resetar_areia, "resetar areia")
+    def resetar_areia(self, command_id: Optional[str] = None) -> dict[str, Any]:
+        return self._execute(lambda: self._middleware.resetar_areia(command_id=command_id), "resetar areia")
 
-    def silenciar_alarme(self) -> dict[str, Any]:
-        return self._execute(self._middleware.silenciar_alarme, "silenciar alarme")
+    def silenciar_alarme(self, command_id: Optional[str] = None) -> dict[str, Any]:
+        return self._execute(lambda: self._middleware.silenciar_alarme(command_id=command_id), "silenciar alarme")
+
+    def get_nodes_info(self) -> list[dict[str, Any]]:
+        return self._middleware.get_nodes_info()
+
+    def set_node_corrupt(self, node_id: int, corrupt: bool) -> dict[str, Any]:
+        res = self._middleware.set_node_corrupt(int(node_id), bool(corrupt))
+        return {"sucesso": res, "node_id": node_id, "corrupt": corrupt}
+
+    def set_node_offline(self, node_id: int, offline: bool) -> dict[str, Any]:
+        res = self._middleware.set_node_offline(int(node_id), bool(offline))
+        return {"sucesso": res, "node_id": node_id, "offline": offline}
 
 
 class PyroMiddlewareProxy:
@@ -157,14 +213,32 @@ class PyroMiddlewareProxy:
     def get_pet_status(self) -> dict[str, Any]:
         return self._call("get_pet_status")
 
-    def dispensar_racao(self, quantidade: float = 50.0) -> dict[str, Any]:
+    def dispensar_racao(self, quantidade: float = 50.0, command_id: Optional[str] = None) -> dict[str, Any]:
+        if command_id is not None:
+            return self._call("dispensar_racao", float(quantidade), command_id)
         return self._call("dispensar_racao", float(quantidade))
 
-    def repor_agua(self, quantidade: float = 200.0) -> dict[str, Any]:
+    def repor_agua(self, quantidade: float = 200.0, command_id: Optional[str] = None) -> dict[str, Any]:
+        if command_id is not None:
+            return self._call("repor_agua", float(quantidade), command_id)
         return self._call("repor_agua", float(quantidade))
 
-    def resetar_areia(self) -> dict[str, Any]:
+    def resetar_areia(self, command_id: Optional[str] = None) -> dict[str, Any]:
+        if command_id is not None:
+            return self._call("resetar_areia", command_id)
         return self._call("resetar_areia")
 
-    def silenciar_alarme(self) -> dict[str, Any]:
+    def silenciar_alarme(self, command_id: Optional[str] = None) -> dict[str, Any]:
+        if command_id is not None:
+            return self._call("silenciar_alarme", command_id)
         return self._call("silenciar_alarme")
+
+    def get_nodes_info(self) -> list[dict[str, Any]]:
+        res = self._call("get_nodes_info")
+        return list(res) if isinstance(res, list) else []
+
+    def set_node_corrupt(self, node_id: int, corrupt: bool) -> dict[str, Any]:
+        return self._call("set_node_corrupt", int(node_id), bool(corrupt))
+
+    def set_node_offline(self, node_id: int, offline: bool) -> dict[str, Any]:
+        return self._call("set_node_offline", int(node_id), bool(offline))

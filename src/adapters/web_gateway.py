@@ -36,11 +36,15 @@ class WebGatewayLogHandler(logging.Handler):
     def emit(self, record: logging.LogRecord) -> None:
         try:
             lvl = "WARN" if record.levelname == "WARNING" else record.levelname
+            ts = datetime.fromtimestamp(record.created).astimezone().isoformat()
+            msg = record.getMessage()
+            line = f"{ts} [{lvl}] ({self.component or record.name}) {msg}"
+            self.gateway.broadcast("raw_log", {"source": "web", "line": line})
             entry = {
-                "timestamp": datetime.fromtimestamp(record.created).astimezone().isoformat(),
+                "timestamp": ts,
                 "level": lvl,
                 "component": self.component or record.name,
-                "message": record.getMessage(),
+                "message": msg,
                 "payload": getattr(record, "payload", None),
             }
             self.gateway.broadcast("log", entry)
@@ -198,6 +202,8 @@ class _GatewayHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
         path = self.path.split("?")[0]
         if path == "/api/status":
             self._handle_get_status()
+        elif path == "/api/nodes":
+            self._handle_get_nodes()
         elif path in ("/api/events", "/events", "/stream"):
             self._handle_sse()
         elif path in ("/docs", "/swagger"):
@@ -212,9 +218,13 @@ class _GatewayHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
         if path.startswith("/api/command/"):
             action = path[len("/api/command/"):]
             self._handle_command(action)
-        elif path.startswith("/api/scenarios/"):
-            scenario = path[len("/api/scenarios/"):]
-            self._handle_scenario(scenario)
+        elif path.startswith("/api/nodes/"):
+            parts = path[len("/api/nodes/"):].split("/")
+            if len(parts) >= 2:
+                node_id_str, action = parts[0], parts[1]
+                self._handle_node_action(node_id_str, action)
+            else:
+                self._send_json(400, {"sucesso": False, "mensagem": f"Caminho de nó incompleto: {path}"})
         else:
             self._send_json(404, {"sucesso": False, "mensagem": f"Rota não encontrada: {path}"})
 
@@ -229,6 +239,55 @@ class _GatewayHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
         except Exception as exc:
             self._send_json(500, {"sucesso": False, "mensagem": str(exc)})
 
+    def _handle_get_nodes(self) -> None:
+        mw = self.server.gateway.middleware
+        if mw is None:
+            self._send_json(503, {"sucesso": False, "mensagem": "Middleware não conectado"})
+            return
+        try:
+            nodes = mw.get_nodes_info() if hasattr(mw, "get_nodes_info") else []
+            self._send_json(200, {"sucesso": True, "nodes": nodes})
+        except Exception as exc:
+            self._send_json(500, {"sucesso": False, "mensagem": str(exc)})
+
+    def _handle_node_action(self, node_id_str: str, action: str) -> None:
+        mw = self.server.gateway.middleware
+        if mw is None:
+            self._send_json(503, {"sucesso": False, "mensagem": "Middleware não conectado"})
+            return
+        try:
+            node_id = int(node_id_str)
+        except ValueError:
+            self._send_json(400, {"sucesso": False, "mensagem": f"ID de nó inválido: {node_id_str}"})
+            return
+
+        body = self._read_json_body()
+        try:
+            if action == "offline":
+                offline = bool(body.get("offline", True))
+                res = mw.set_node_offline(node_id, offline)
+                self._send_json(200, res)
+            elif action == "corrupt":
+                corrupt = bool(body.get("corrupt", True))
+                res = mw.set_node_corrupt(node_id, corrupt)
+                self._send_json(200, res)
+            elif action == "toggle_offline":
+                nodes = mw.get_nodes_info() if hasattr(mw, "get_nodes_info") else []
+                target = next((n for n in nodes if n.get("id") == node_id), None)
+                current = target.get("offline", False) if target else False
+                res = mw.set_node_offline(node_id, not current)
+                self._send_json(200, res)
+            elif action == "toggle_corrupt":
+                nodes = mw.get_nodes_info() if hasattr(mw, "get_nodes_info") else []
+                target = next((n for n in nodes if n.get("id") == node_id), None)
+                current = target.get("corrupt", False) if target else False
+                res = mw.set_node_corrupt(node_id, not current)
+                self._send_json(200, res)
+            else:
+                self._send_json(404, {"sucesso": False, "mensagem": f"Ação de nó desconhecida: {action}"})
+        except Exception as exc:
+            self._send_json(500, {"sucesso": False, "mensagem": str(exc)})
+
     def _handle_command(self, action: str) -> None:
         mw = self.server.gateway.middleware
         if mw is None:
@@ -239,16 +298,17 @@ class _GatewayHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
         gateway = self.server.gateway
 
         try:
+            cid = body.get("command_id")
             if action == "dispense_food":
                 qty = float(body.get("quantidade", body.get("quantidade_gramas", 50.0)))
-                res = mw.dispensar_racao(qty)
+                res = mw.dispensar_racao(qty, command_id=cid)
             elif action == "refill_water":
                 qty = float(body.get("quantidade", body.get("quantidade_ml", 200.0)))
-                res = mw.repor_agua(qty)
+                res = mw.repor_agua(qty, command_id=cid)
             elif action == "clean_litter":
-                res = mw.resetar_areia()
+                res = mw.resetar_areia(command_id=cid)
             elif action == "silence_alarm":
-                res = mw.silenciar_alarme()
+                res = mw.silenciar_alarme(command_id=cid)
             else:
                 self._send_json(404, {"sucesso": False, "mensagem": f"Comando desconhecido: {action}"})
                 return
@@ -258,21 +318,8 @@ class _GatewayHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
 
             self._send_json(200, res)
         except Exception as exc:
-            logger.exception("Falha na execução do comando %s", action)
-            self._send_json(500, {"sucesso": False, "mensagem": str(exc)})
-
-    def _handle_scenario(self, scenario_name: str) -> None:
-        handler = self.server.gateway.scenario_handlers.get(scenario_name)
-        if handler is None:
-            self._send_json(404, {"sucesso": False, "mensagem": f"Cenário desconhecido: {scenario_name}"})
-            return
-        try:
-            body = self._read_json_body()
-            result = handler(body)
-            self._send_json(200, result)
-        except Exception as exc:
-            logger.exception("Falha ao executar cenário %s", scenario_name)
-            self._send_json(500, {"sucesso": False, "mensagem": str(exc)})
+            logger.warning("Falha na validação/execução do comando %s: %s", action, exc)
+            self._send_json(400, {"sucesso": False, "mensagem": str(exc)})
 
     def _handle_sse(self) -> None:
         gateway = self.server.gateway
@@ -373,17 +420,17 @@ class WebGateway:
         middleware: Optional[Any] = None,
         static_dir: Optional[str] = None,
         logs_dir: Optional[str] = None,
+        mqtt_client: Optional[Any] = None,
     ) -> None:
         self.host = host
         self._requested_port = port
         self.middleware = middleware
         self.static_dir = static_dir
         self.logs_dir = logs_dir
+        self.mqtt_client = mqtt_client
         self.tailer: Optional[LogFileTailer] = None
         if self.logs_dir:
             self.tailer = LogFileTailer(gateway=self, logs_dir=self.logs_dir)
-
-        self.scenario_handlers: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {}
 
         self._clients_lock = threading.Lock()
         self._subscribers: set[queue.Queue[str]] = set()
@@ -401,11 +448,6 @@ class WebGateway:
     @property
     def is_running(self) -> bool:
         return self._is_running
-
-    def register_scenario(
-        self, name: str, handler: Callable[[dict[str, Any]], dict[str, Any]]
-    ) -> None:
-        self.scenario_handlers[name] = handler
 
     def subscribe_sse(self) -> queue.Queue[str]:
         q: queue.Queue[str] = queue.Queue(maxsize=100)
