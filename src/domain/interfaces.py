@@ -53,6 +53,21 @@ class ControllerNode(Protocol):
     def set_primary(self, primary: bool) -> None:
         ...
 
+    def is_corrupted(self) -> bool:
+        ...
+
+    def set_corrupt(self, corrupt: bool) -> None:
+        ...
+
+    def is_offline(self) -> bool:
+        ...
+
+    def set_offline(self, offline: bool) -> None:
+        ...
+
+    def get_info(self) -> dict[str, Any]:
+        ...
+
 
 # Backwards compatibility aliases during refactor
 IStateRepository = StateRepository

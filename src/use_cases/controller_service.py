@@ -7,7 +7,7 @@ from typing import Any, Iterable, Mapping, Optional
 import uuid
 
 from src.domain.entities import Command, CommandResult, PetState
-from src.domain.exceptions import SanityError
+from src.domain.exceptions import NodeUnreachableError, SanityError
 from src.domain.interfaces import BrokerClient, ControllerNode, StateRepository
 from src.domain.validators import TelemetrySanityValidator
 
@@ -28,12 +28,14 @@ class ControllerService:
         broker: BrokerClient,
         is_primary: bool = False,
         is_corrupt: bool = False,
+        is_offline: bool = False,
     ) -> None:
         self.node_id = node_id
         self.repository = repository
         self.broker = broker
         self._is_primary = is_primary
         self.is_corrupt = is_corrupt
+        self._is_offline = is_offline
 
     def is_primary(self) -> bool:
         return self._is_primary
@@ -41,7 +43,36 @@ class ControllerService:
     def set_primary(self, primary: bool) -> None:
         self._is_primary = primary
 
+    def is_corrupted(self) -> bool:
+        return self.is_corrupt
+
+    def set_corrupt(self, corrupt: bool) -> None:
+        self.is_corrupt = corrupt
+        logger.warning(
+            "Nó %d: modo bizantino (corrupção de resposta) alterado para %s",
+            self.node_id,
+            corrupt,
+        )
+
+    def is_offline(self) -> bool:
+        return self._is_offline
+
+    def set_offline(self, offline: bool) -> None:
+        self._is_offline = offline
+        status_label = "OFFLINE (crash-stop)" if offline else "ONLINE"
+        logger.warning("Nó %d: status de conectividade alterado para %s", self.node_id, status_label)
+
+    def get_info(self) -> dict[str, Any]:
+        return {
+            "id": self.node_id,
+            "primary": self.is_primary(),
+            "corrupt": self.is_corrupt,
+            "offline": self._is_offline,
+        }
+
     def get_state(self) -> PetState:
+        if self._is_offline:
+            raise NodeUnreachableError(f"Nó {self.node_id} está OFFLINE (crash-stop simulado)")
         state = self.repository.get_state() or PetState()
         return replace(state, status_fuga="FORA", alarme_ativo=True) if self.is_corrupt else state
 
@@ -51,6 +82,9 @@ class ControllerService:
             self.broker.publish(topic, payload, qos=2)
 
     def handle_telemetry(self, topic: str, payload: Mapping[str, Any]) -> None:
+        if self._is_offline:
+            return
+
         sensor = topic.strip().rstrip("/").split("/")[-1]
         try:
             TelemetrySanityValidator.validate(sensor, payload)
@@ -81,7 +115,15 @@ class ControllerService:
 
     def execute_command(self, command: Command) -> CommandResult:
         """Executes a command idempotently with event recording and actuation."""
+        if self._is_offline:
+            raise NodeUnreachableError(f"Nó {self.node_id} está OFFLINE (crash-stop simulado)")
+
         if self.repository.has_event(command.command_id):
+            logger.warning(
+                "Nó %d: Comando duplicado ignorado por idempotência (command_id=%s)",
+                self.node_id,
+                command.command_id,
+            )
             return CommandResult(
                 sucesso=True,
                 mensagem=f"Comando idempotente ja processado: {command.command_id}",

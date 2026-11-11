@@ -52,6 +52,8 @@ class DummyControllerNode:
     def __init__(self, primary: bool = False) -> None:
         self._primary = primary
         self._state = PetState()
+        self._corrupt = False
+        self._offline = False
 
     def get_state(self) -> PetState:
         return self._state
@@ -64,6 +66,26 @@ class DummyControllerNode:
 
     def set_primary(self, primary: bool) -> None:
         self._primary = primary
+
+    def is_corrupted(self) -> bool:
+        return self._corrupt
+
+    def set_corrupt(self, corrupt: bool) -> None:
+        self._corrupt = corrupt
+
+    def is_offline(self) -> bool:
+        return self._offline
+
+    def set_offline(self, offline: bool) -> None:
+        self._offline = offline
+
+    def get_info(self) -> dict[str, Any]:
+        return {
+            "id": 1,
+            "primary": self._primary,
+            "corrupt": self._corrupt,
+            "offline": self._offline,
+        }
 
 
 def test_interfaces_runtime_checking():
