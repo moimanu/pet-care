@@ -130,3 +130,41 @@ class PyroMiddlewareWrapper:
 
     def silenciar_alarme(self) -> dict[str, Any]:
         return self._execute(self._middleware.silenciar_alarme, "silenciar alarme")
+
+
+class PyroMiddlewareProxy:
+    """Thread-safe client proxy communicating with PyroMiddlewareWrapper via thread-local Proxies."""
+
+    def __init__(self, uri: str = "", raw_proxy: Optional[Any] = None) -> None:
+        self._uri = uri
+        self._raw_proxy = raw_proxy
+        self._local = threading.local()
+
+    def _get_proxy(self) -> Any:
+        if self._raw_proxy is not None:
+            return self._raw_proxy
+        if not hasattr(self._local, "proxy"):
+            self._local.proxy = Pyro5.api.Proxy(self._uri)
+        return self._local.proxy
+
+    def _call(self, func_name: str, *args: Any, **kwargs: Any) -> Any:
+        try:
+            return getattr(self._get_proxy(), func_name)(*args, **kwargs)
+        except Exception as exc:
+            logger.warning("Falha RPC no Middleware %s em %s: %s", func_name, self._uri, exc)
+            return {"sucesso": False, "mensagem": f"Falha de conexão com Middleware: {exc}", "estado": None}
+
+    def get_pet_status(self) -> dict[str, Any]:
+        return self._call("get_pet_status")
+
+    def dispensar_racao(self, quantidade: float = 50.0) -> dict[str, Any]:
+        return self._call("dispensar_racao", float(quantidade))
+
+    def repor_agua(self, quantidade: float = 200.0) -> dict[str, Any]:
+        return self._call("repor_agua", float(quantidade))
+
+    def resetar_areia(self) -> dict[str, Any]:
+        return self._call("resetar_areia")
+
+    def silenciar_alarme(self) -> dict[str, Any]:
+        return self._call("silenciar_alarme")

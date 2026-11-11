@@ -25,6 +25,7 @@ from scripts.run_audit_suite import (
     run_scenario_4_sanitization,
 )
 from src.adapters.mqtt_client import MqttClient
+from src.adapters.pyro_gateway import PyroMiddlewareProxy
 from src.adapters.sqlite_repository import SqliteRepository
 from src.adapters.web_gateway import WebGateway, WebGatewayLogHandler
 from src.domain.entities import Command
@@ -120,8 +121,8 @@ def main() -> None:
         format="%(asctime)s [%(levelname)s] (%(name)s) %(message)s",
     )
 
-    logger.info("Conectando proxy ao Middleware Pyro5 em %s...", args.middleware)
-    proxy = Pyro5.api.Proxy(args.middleware)
+    logger.info("Conectando proxy thread-safe ao Middleware Pyro5 em %s...", args.middleware)
+    proxy = PyroMiddlewareProxy(args.middleware)
 
     gateway = build_web_server(
         host=args.host,

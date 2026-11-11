@@ -87,3 +87,56 @@ def test_pyro_proxy_translates_communication_error_to_domain_exception():
     proxy = PyroControllerNodeProxy(raw_proxy=mock_raw_proxy)
     with pytest.raises(NodeUnreachableError, match="Connection refused"):
         proxy.get_state()
+
+
+def test_pyro_middleware_proxy_forwarding():
+    from src.adapters.pyro_gateway import PyroMiddlewareProxy
+
+    mock_raw = MagicMock()
+    mock_raw.get_pet_status.return_value = {"sucesso": True, "estado": {"racao_gramas": 100.0}}
+    mock_raw.dispensar_racao.return_value = {"sucesso": True, "mensagem": "ok"}
+    mock_raw.repor_agua.return_value = {"sucesso": True, "mensagem": "ok"}
+    mock_raw.resetar_areia.return_value = {"sucesso": True, "mensagem": "ok"}
+    mock_raw.silenciar_alarme.return_value = {"sucesso": True, "mensagem": "ok"}
+
+    proxy = PyroMiddlewareProxy(raw_proxy=mock_raw)
+
+    status = proxy.get_pet_status()
+    assert status["sucesso"] is True
+    assert status["estado"]["racao_gramas"] == 100.0
+
+    res = proxy.dispensar_racao(50.0)
+    assert res["sucesso"] is True
+    mock_raw.dispensar_racao.assert_called_with(50.0)
+
+    res_agua = proxy.repor_agua(200.0)
+    assert res_agua["sucesso"] is True
+
+    res_areia = proxy.resetar_areia()
+    assert res_areia["sucesso"] is True
+
+    res_alarme = proxy.silenciar_alarme()
+    assert res_alarme["sucesso"] is True
+
+
+def test_pyro_middleware_proxy_thread_local_isolation():
+    import threading
+    from src.adapters.pyro_gateway import PyroMiddlewareProxy
+
+    proxy = PyroMiddlewareProxy(uri="PYRO:petcare.middleware@localhost:9090")
+    results = {}
+
+    def worker(tid: int):
+        # Access thread-local proxy without crashing across threads
+        local_p = proxy._get_proxy()
+        results[tid] = id(local_p)
+
+    t1 = threading.Thread(target=worker, args=(1,))
+    t2 = threading.Thread(target=worker, args=(2,))
+    t1.start()
+    t2.start()
+    t1.join()
+    t2.join()
+
+    # Proxies instantiated on separate threads must be distinct instances
+    assert results[1] != results[2]
