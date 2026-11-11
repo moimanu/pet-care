@@ -169,7 +169,13 @@
             "description": "Identificador do cenário",
             "schema": {
               "type": "string",
-              "enum": ["nominal", "failover", "byzantine", "sanitization", "idempotency"]
+              "enum": [
+                "nominal",
+                "failover",
+                "byzantine",
+                "sanitization",
+                "idempotency"
+              ]
             }
           }
         ],
@@ -181,7 +187,9 @@
                 "schema": {
                   "type": "object",
                   "properties": {
-                    "success": { "type": "boolean" }
+                    "success": {
+                      "type": "boolean"
+                    }
                   }
                 }
               }
@@ -196,31 +204,64 @@
       "PetState": {
         "type": "object",
         "properties": {
-          "racao_gramas": { "type": "number", "example": 185.0 },
-          "agua_ml": { "type": "number", "example": 450.0 },
-          "areia_usos": { "type": "integer", "example": 1 },
-          "status_fuga": { "type": "string", "example": "DENTRO" },
-          "alarme_ativo": { "type": "boolean", "example": false },
-          "hash": { "type": "string", "example": "a4b5c6..." },
-          "atualizado_em": { "type": "string", "example": "2026-11-11T13:20:00Z" }
+          "racao_gramas": {
+            "type": "number",
+            "example": 185.0
+          },
+          "agua_ml": {
+            "type": "number",
+            "example": 450.0
+          },
+          "areia_usos": {
+            "type": "integer",
+            "example": 1
+          },
+          "status_fuga": {
+            "type": "string",
+            "example": "DENTRO"
+          },
+          "alarme_ativo": {
+            "type": "boolean",
+            "example": false
+          },
+          "hash": {
+            "type": "string",
+            "example": "a4b5c6..."
+          },
+          "atualizado_em": {
+            "type": "string",
+            "example": "2026-11-11T13:20:00Z"
+          }
         }
       },
       "StatusResponse": {
         "type": "object",
         "properties": {
-          "sucesso": { "type": "boolean", "example": true },
-          "estado": { "$ref": "#/components/schemas/PetState" }
+          "sucesso": {
+            "type": "boolean",
+            "example": true
+          },
+          "estado": {
+            "$ref": "#/components/schemas/PetState"
+          }
         }
       },
       "CommandResponse": {
         "type": "object",
         "properties": {
-          "sucesso": { "type": "boolean", "example": true },
-          "mensagem": { "type": "string", "example": "Comando executado com sucesso" },
-          "estado": { "$ref": "#/components/schemas/PetState" }
+          "sucesso": {
+            "type": "boolean",
+            "example": true
+          },
+          "mensagem": {
+            "type": "string",
+            "example": "Comando executado com sucesso"
+          },
+          "estado": {
+            "$ref": "#/components/schemas/PetState"
+          }
         }
       }
     }
   }
 }
-

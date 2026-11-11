@@ -1,21 +1,23 @@
 <!DOCTYPE html>
 <html lang="pt-BR">
+
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>PetCare Distribuido - Painel de Controle</title>
+  <title>PetCare - Painel de Controle</title>
   <link rel="stylesheet" href="style.css">
   <script src="https://unpkg.com/lucide@latest"></script>
 </head>
+
 <body>
   <header>
     <div class="brand">
       <i data-lucide="shield-check" aria-hidden="true"></i>
-      <span>PETCARE DISTRIBUIDO</span>
-      <span class="brand-badge">BFT 2f+1</span>
+      <span>PETCARE</span>
     </div>
     <div class="header-meta">
-      <button id="btn-toggle-pause" class="btn btn-sm" aria-label="Pausar ou retomar atualizacoes" title="Pausar ou retomar">
+      <button id="btn-toggle-pause" class="btn btn-sm" aria-label="Pausar ou retomar atualizacoes"
+        title="Pausar ou retomar">
         <i data-lucide="pause" aria-hidden="true"></i>
         <span id="label-pause-btn">Pausar</span>
       </button>
@@ -100,7 +102,8 @@
             <span style="font-size: 11px; color: var(--muted);">Sirene de Fuga</span>
             <span id="val-alarm" class="badge badge-neutral">DESARMADO</span>
           </div>
-          <button id="btn-silence" class="btn btn-danger" style="width: 100%;" aria-label="Silenciar ou desarmar alarme">
+          <button id="btn-silence" class="btn btn-danger" style="width: 100%;"
+            aria-label="Silenciar ou desarmar alarme">
             <i data-lucide="volume-x" aria-hidden="true"></i>
             <span>Silenciar / Desarmar Alarme</span>
           </button>
@@ -114,18 +117,21 @@
           </div>
           <div class="action-group">
             <div class="input-row">
-              <input type="number" id="input-food-qty" class="input-text" value="50" min="1" step="5" placeholder="Gramas">
+              <input type="number" id="input-food-qty" class="input-text" value="50" min="1" step="5"
+                placeholder="Gramas">
               <button id="btn-dispense" class="btn btn-primary" aria-label="Dispensar racao" title="Dispensar racao">
                 <i data-lucide="plus" aria-hidden="true"></i>
               </button>
             </div>
             <div class="input-row">
-              <input type="number" id="input-water-qty" class="input-text" value="200" min="1" step="10" placeholder="Mililitros">
+              <input type="number" id="input-water-qty" class="input-text" value="200" min="1" step="10"
+                placeholder="Mililitros">
               <button id="btn-water" class="btn btn-primary" aria-label="Repor agua" title="Repor agua">
                 <i data-lucide="plus" aria-hidden="true"></i>
               </button>
             </div>
-            <button id="btn-clean-litter" class="btn" style="width: 100%;" aria-label="Registrar limpeza da caixa de areia">
+            <button id="btn-clean-litter" class="btn" style="width: 100%;"
+              aria-label="Registrar limpeza da caixa de areia">
               <i data-lucide="rotate-ccw" aria-hidden="true"></i>
               <span>Zerar Caixa de Areia</span>
             </button>
@@ -141,7 +147,6 @@
           <i data-lucide="terminal" aria-hidden="true"></i>
           <span>Logs & Observabilidade</span>
         </div>
-        <span class="badge badge-neutral">Console Cru</span>
       </div>
 
       <div class="panel-content">
@@ -159,20 +164,7 @@
               <button class="term-tab" data-tab="broker" role="tab" aria-selected="false">Broker MQTT</button>
             </div>
 
-            <!-- Toolbar de Acoes -->
-            <div class="terminal-toolbar">
-              <span id="term-line-count">0 eventos</span>
-              <div class="terminal-actions">
-                <button id="btn-autoscroll" class="btn btn-xs active" aria-label="Alternar rolagem automatica" title="Auto-scroll ativo">
-                  <i data-lucide="arrow-down" aria-hidden="true"></i>
-                  <span>Auto-scroll</span>
-                </button>
-                <button id="btn-clear-term" class="btn btn-xs" aria-label="Limpar console" title="Limpar console">
-                  <i data-lucide="trash-2" aria-hidden="true"></i>
-                  <span>Limpar</span>
-                </button>
-              </div>
-            </div>
+
           </div>
 
           <!-- Janela do Terminal Monospace -->
@@ -180,6 +172,20 @@
             <div class="raw-line" data-src="system">
               <span class="raw-tag tag-generic">[Sistema]</span>
               <span class="raw-text">Aguardando stream de logs brutos via SSE...</span>
+            </div>
+          </div>
+
+          <!-- Toolbar de Acoes -->
+          <div class="terminal-toolbar">
+            <span id="term-line-count">0 eventos</span>
+            <div class="terminal-actions">
+              <button id="btn-autoscroll" class="btn btn-xs active" aria-label="Alternar rolagem automatica"
+                title="Auto-scroll ativo">
+                <i data-lucide="arrow-down" aria-hidden="true"></i>
+              </button>
+              <button id="btn-clear-term" class="btn btn-xs" aria-label="Limpar console" title="Limpar console">
+                <i data-lucide="trash-2" aria-hidden="true"></i>
+              </button>
             </div>
           </div>
         </div>
@@ -193,7 +199,6 @@
           <i data-lucide="book-open" aria-hidden="true"></i>
           <span>Swagger API & Testes</span>
         </div>
-        <span class="badge badge-success">OpenAPI 3.0</span>
       </div>
 
       <div class="panel-content swagger-panel-content">
@@ -204,5 +209,5 @@
 
   <script src="app.js"></script>
 </body>
-</html>
 
+</html>
