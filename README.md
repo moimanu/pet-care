@@ -35,6 +35,7 @@ flowchart TD
 
 | Componente | Protocolo | Endereço / Porta | Identificador Pyro5 |
 | :--- | :--- | :--- | :--- |
+| **Painel Web / Gateway** | HTTP / SSE | `localhost:8080` | N/A |
 | **Broker MQTT** | TCP / MQTT | `localhost:1883` | N/A |
 | **Middleware** | TCP / Pyro5 RPC | `localhost:9090` | `petcare.middleware` |
 | **Controlador 1** | TCP / Pyro5 RPC | `localhost:9091` | `petcare.controller.1` |
@@ -119,14 +120,16 @@ pip install -r requirements.txt
 ## 5. Como Executar o Sistema
 
 ### 5.1. Inicialização Automática Completa (Recomendado)
-Um único comando inicializa o broker Docker, os 3 controladores, o middleware, o simulador de dispositivos IoT e abre o dashboard do cliente CLI interativo:
+Um único comando inicializa o broker Docker, os 3 controladores, o middleware, o simulador de dispositivos IoT e o servidor web com o painel unificado:
 
 ```bash
 ./scripts/start_system.sh
 ```
 
+Acesse no navegador: **http://localhost:8080/**
+
 > **Dica:** Os logs de cada processo em segundo plano ficam gravados em `./logs/` (`controller_1.log`, `controller_2.log`, `controller_3.log`, `middleware.log`, `iot_devices.log`).
-> Ao sair do cliente (Opção `0` ou `Ctrl+C`), todos os processos em segundo plano são finalizados automaticamente.
+> Ao pressionar `Ctrl+C`, todos os processos em segundo plano são finalizados automaticamente.
 
 ---
 
@@ -165,24 +168,16 @@ docker compose up -d
 .venv/bin/python src/entrypoints/run_iot_devices.py
 ```
 
-#### Terminal 6: Iniciar o Cliente CLI do Tutor
+#### Terminal 6: Iniciar o Painel Web (Tutor & Observabilidade)
 ```bash
 .venv/bin/python src/entrypoints/run_web.py
 ```
+Acesse no navegador: **http://localhost:8080/**
 
-**Interface Interativa:**
-```text
-==================================================
-           SISTEMA IOT PET CARE - DASHBOARD       
-==================================================
- [1] Visualizar Status Geral do Pet
- [2] Dispensar Ração Manualmente
- [3] Abastecer Água Manualmente
- [4] Resetar Caixa de Areia (Registrar Limpeza)
- [5] Silenciar / Desarmar Alarme de Fuga
- [0] Sair
-==================================================
-```
+**Módulos do Painel Web (Single-Page Application):**
+* **Módulo 1 (Painel do Tutor):** Indicadores de telemetria consolidada em tempo real (ração, água, areia, perímetro de fuga e status da sirene) e ações de controle imediato (dispensar ração, repor água, zerar caixa de areia e silenciar alarme).
+* **Módulo 2 (Observabilidade & Logs):** Streaming contínuo via Server-Sent Events (SSE) com filtros de severidade (`TODOS`, `INFO`, `WARN`, `ERROR`), contadores e inspetor visual de quórum bizantino ($2f+1$) com conferência de hashes dos 3 nós.
+* **Módulo 3 (Bancada de Testes & Simulação):** Disparador interativo dos cenários distribuídos (Replicação Nominal, Failover Crash-Stop, Falha Bizantina, Sanitização de Borda e Idempotência de Comandos).
 
 ---
 
@@ -207,4 +202,4 @@ Executa a validação distribuída dos 4 cenários críticos exigidos na especif
 ```bash
 .venv/bin/pytest
 ```
-*Total de 50 testes cobrindo entidades, validadores, contratos, repositório SQLite, casos de uso, adaptadores MQTT/Pyro5 e entrypoints.*
+*Total de 66 testes cobrindo entidades, validadores, contratos, repositório SQLite, casos de uso, adaptadores MQTT/Pyro5/WebGateway, rotas REST/SSE e entrypoints.*
