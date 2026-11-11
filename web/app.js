@@ -9,6 +9,8 @@
   const state = {
     connected: false,
     isPaused: false,
+    autoScroll: true,
+    activeTab: "all",
     pet: {
       racao_gramas: 0.0,
       agua_ml: 0.0,
@@ -18,6 +20,16 @@
       hash: "",
       atualizado_em: "",
     },
+  };
+
+  const SOURCE_TAGS = {
+    "node-1": { label: "Controlador 1", cls: "tag-node-1" },
+    "node-2": { label: "Controlador 2", cls: "tag-node-2" },
+    "node-3": { label: "Controlador 3", cls: "tag-node-3" },
+    "middleware": { label: "Middleware", cls: "tag-middleware" },
+    "iot": { label: "IoT Edge", cls: "tag-iot" },
+    "broker": { label: "Broker MQTT", cls: "tag-broker" },
+    "web": { label: "Web Server", cls: "tag-web" },
   };
 
   // View Helpers & DOM elements
@@ -57,37 +69,52 @@
       .replace(/'/g, "&#039;");
   }
 
-  function appendProcessTerminal(termId, text, cardId) {
-    const term = $(`#${termId}`);
+  function appendRawLog(source, rawLine) {
+    const term = $("#unified-terminal");
     if (!term) return;
 
-    const firstLine = term.querySelector(".term-line");
-    if (firstLine) {
-      const tsSpan = firstLine.querySelector(".term-ts");
-      if (tsSpan && tsSpan.textContent === "--:--:--") {
-        firstLine.remove();
-      }
+    // Remove placeholder line if present
+    const placeholder = term.querySelector(".raw-line[data-src='system']");
+    if (placeholder) placeholder.remove();
+
+    const tagInfo = SOURCE_TAGS[source] || { label: source || "Sistema", cls: "tag-generic" };
+
+    const div = document.createElement("div");
+    div.className = "raw-line";
+    div.setAttribute("data-src", source || "generic");
+    if (state.activeTab !== "all" && state.activeTab !== source) {
+      div.classList.add("hidden");
     }
 
-    const ts = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
-    const line = document.createElement("div");
-    line.className = "term-line";
-    line.innerHTML = `<span class="term-ts">${ts}</span><span>${escapeHtml(text)}</span>`;
-    term.appendChild(line);
+    let lvlClass = "";
+    if (rawLine.includes("[WARN") || rawLine.includes("WARNING")) {
+      lvlClass = "level-warn";
+    } else if (rawLine.includes("[ERROR") || rawLine.includes("CRITICAL")) {
+      lvlClass = "level-error";
+    }
 
-    while (term.children.length > 50) {
+    div.innerHTML = `<span class="raw-tag ${tagInfo.cls}">[${tagInfo.label}]</span><span class="raw-text ${lvlClass}">${escapeHtml(rawLine)}</span>`;
+    term.appendChild(div);
+
+    updateLineCount();
+
+    // Prevent memory leaks by capping lines in DOM
+    while (term.children.length > 500) {
       term.removeChild(term.firstElementChild);
     }
 
-    term.scrollTop = term.scrollHeight;
-
-    if (cardId) {
-      const card = $(`#${cardId}`);
-      if (card) {
-        card.classList.add("pulse");
-        setTimeout(() => card.classList.remove("pulse"), 500);
-      }
+    if (state.autoScroll) {
+      term.scrollTop = term.scrollHeight;
     }
+  }
+
+  function updateLineCount() {
+    const term = $("#unified-terminal");
+    if (!term) return;
+    const countEl = $("#term-line-count");
+    if (!countEl) return;
+    const visibleCount = term.querySelectorAll(".raw-line:not(.hidden)").length;
+    countEl.textContent = `${visibleCount} eventos`;
   }
 
   function renderPetState() {
@@ -123,8 +150,6 @@
 
   // Network Actions
   async function postCommand(endpoint, payload = {}) {
-    appendProcessTerminal("term-middleware", `Despachando comando RPC /api/command/${endpoint}`, "process-middleware");
-    appendProcessTerminal("term-node-1", "Executando comando no SQLite (Líder)", "process-node-1");
     try {
       const res = await fetch(`/api/command/${endpoint}`, {
         method: "POST",
@@ -134,12 +159,8 @@
       const data = await res.json();
       if (!res.ok || !data.sucesso) {
         showFeedback(data.mensagem || "Erro na solicitacao", true);
-        appendProcessTerminal("term-middleware", `Falha no comando: ${data.mensagem || "Erro"}`, "process-middleware");
       } else {
         showFeedback(data.mensagem || "Comando executado com sucesso", false);
-        appendProcessTerminal("term-middleware", `Quórum confirmado • Comando ${endpoint} concluído`, "process-middleware");
-        appendProcessTerminal("term-node-2", "Réplica sincronizada via replicação RPC", "process-node-2");
-        appendProcessTerminal("term-node-3", "Réplica sincronizada via replicação RPC", "process-node-3");
         if (data.estado) {
           state.pet = Object.assign({}, state.pet, data.estado);
           renderPetState();
@@ -148,27 +169,7 @@
       return data;
     } catch (err) {
       showFeedback(`Falha de comunicacao: ${err.message}`, true);
-      appendProcessTerminal("term-middleware", `Erro RPC: ${err.message}`, "process-middleware");
       throw err;
-    }
-  }
-
-  async function runScenario(scenarioKey, resultEl) {
-    resultEl.className = "scenario-res show";
-    resultEl.textContent = "Executando cenario...";
-    appendProcessTerminal("term-middleware", `Iniciando teste distribuído: ${scenarioKey}`, "process-middleware");
-    try {
-      const res = await fetch(`/api/scenarios/${scenarioKey}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({}),
-      });
-      const data = await res.json();
-      resultEl.textContent = JSON.stringify(data, null, 2);
-      appendProcessTerminal("term-middleware", `Cenário ${scenarioKey}: ${data.success ? "Concluído com Sucesso" : "Falhou"}`, "process-middleware");
-    } catch (err) {
-      resultEl.textContent = `Erro: ${err.message}`;
-      appendProcessTerminal("term-middleware", `Erro no cenário: ${err.message}`, "process-middleware");
     }
   }
 
@@ -190,10 +191,18 @@
         const payload = JSON.parse(evt.data);
         state.pet = Object.assign({}, state.pet, payload);
         renderPetState();
-        const shortHash = state.pet.hash ? state.pet.hash.slice(0, 10) : "OK";
-        appendProcessTerminal("term-middleware", `Consenso 2f+1 ativo • Hash: ${shortHash}`, "process-middleware");
       } catch (err) {
         console.error("Erro parsing state event", err);
+      }
+    });
+
+    sse.addEventListener("raw_log", (evt) => {
+      if (state.isPaused) return;
+      try {
+        const entry = JSON.parse(evt.data);
+        appendRawLog(entry.source, entry.line);
+      } catch (err) {
+        console.error("Erro parsing raw_log event", err);
       }
     });
 
@@ -201,56 +210,35 @@
       if (state.isPaused) return;
       try {
         const entry = JSON.parse(evt.data);
-        const msg = String(entry.message || "");
-
-        // Atualiza Broker Mosquitto
-        if (msg.includes("petcare/")) {
-          const topic = msg.replace("Mensagem recebida em ", "").trim();
-          appendProcessTerminal("term-broker", `Tráfego Pub/Sub em ${topic}`, "process-broker");
-        }
-
-        // Atualiza Dispositivos IoT e Controladores
         if (entry.payload) {
           const p = entry.payload;
           let changed = false;
           if (p.nivel_gramas !== undefined && p.nivel_gramas !== null) {
             state.pet.racao_gramas = Number(p.nivel_gramas);
-            appendProcessTerminal("term-iot", `Sensor Ração: ${p.nivel_gramas}g emitido`, "process-iot");
-            appendProcessTerminal("term-node-1", `Processando leitura de ração (${p.nivel_gramas}g)`, "process-node-1");
             changed = true;
           }
           if (p.nivel_ml !== undefined && p.nivel_ml !== null) {
             state.pet.agua_ml = Number(p.nivel_ml);
-            appendProcessTerminal("term-iot", `Sensor Água: ${p.nivel_ml}ml emitido`, "process-iot");
-            appendProcessTerminal("term-node-1", `Processando leitura de água (${p.nivel_ml}ml)`, "process-node-1");
             changed = true;
           }
           if (p.usos_acumulados !== undefined && p.usos_acumulados !== null) {
             state.pet.areia_usos = Number(p.usos_acumulados);
-            appendProcessTerminal("term-iot", `Sensor Areia: ${p.usos_acumulados} usos acumulados`, "process-iot");
-            appendProcessTerminal("term-node-1", `Registrando uso de areia (${p.usos_acumulados})`, "process-node-1");
             changed = true;
           }
           if (p.perimetro !== undefined && p.perimetro !== null) {
             state.pet.status_fuga = String(p.perimetro);
-            appendProcessTerminal("term-iot", `Sensor Perímetro: pet está ${p.perimetro}`, "process-iot");
-            appendProcessTerminal("term-node-1", `Checagem de cerca: ${p.perimetro}`, "process-node-1");
             changed = true;
           }
           if (p.alarme_ativo !== undefined && p.alarme_ativo !== null) {
             state.pet.alarme_ativo = Boolean(p.alarme_ativo);
             changed = true;
           }
-          if (msg.includes("BUZZER ATIVADO")) {
+          if (entry.message && entry.message.includes("BUZZER ATIVADO")) {
             state.pet.alarme_ativo = true;
-            appendProcessTerminal("term-iot", "Atuador Alarme: BUZZER ATIVADO na borda", "process-iot");
-            appendProcessTerminal("term-node-1", "Disparo de alarme registrado no estado", "process-node-1");
             changed = true;
           }
-          if (msg.includes("Alarme silenciado")) {
+          if (entry.message && entry.message.includes("Alarme silenciado")) {
             state.pet.alarme_ativo = false;
-            appendProcessTerminal("term-iot", "Atuador Alarme: Silenciado", "process-iot");
-            appendProcessTerminal("term-node-1", "Alarme silenciado no estado", "process-node-1");
             changed = true;
           }
           if (entry.timestamp) {
@@ -291,12 +279,60 @@
       postCommand("silence_alarm");
     });
 
-    // Scenarios
-    $("#btn-run-sc1").addEventListener("click", () => runScenario("nominal", $("#res-sc1")));
-    $("#btn-run-sc2").addEventListener("click", () => runScenario("failover", $("#res-sc2")));
-    $("#btn-run-sc3").addEventListener("click", () => runScenario("byzantine", $("#res-sc3")));
-    $("#btn-run-sc4").addEventListener("click", () => runScenario("sanitization", $("#res-sc4")));
-    $("#btn-run-sc5").addEventListener("click", () => runScenario("idempotency", $("#res-sc5")));
+    // Terminal Tabs
+    document.querySelectorAll(".term-tab").forEach((tabBtn) => {
+      tabBtn.addEventListener("click", () => {
+        document.querySelectorAll(".term-tab").forEach((b) => {
+          b.classList.remove("active");
+          b.setAttribute("aria-selected", "false");
+        });
+        tabBtn.classList.add("active");
+        tabBtn.setAttribute("aria-selected", "true");
+        state.activeTab = tabBtn.getAttribute("data-tab") || "all";
+
+        const term = $("#unified-terminal");
+        if (term) {
+          term.querySelectorAll(".raw-line").forEach((line) => {
+            const src = line.getAttribute("data-src");
+            if (state.activeTab === "all" || src === state.activeTab) {
+              line.classList.remove("hidden");
+            } else {
+              line.classList.add("hidden");
+            }
+          });
+          updateLineCount();
+          if (state.autoScroll) {
+            term.scrollTop = term.scrollHeight;
+          }
+        }
+      });
+    });
+
+    // Clear Terminal Button
+    const btnClear = $("#btn-clear-term");
+    if (btnClear) {
+      btnClear.addEventListener("click", () => {
+        const term = $("#unified-terminal");
+        if (term) {
+          term.innerHTML = "";
+          updateLineCount();
+        }
+      });
+    }
+
+    // Auto-scroll Button
+    const btnScroll = $("#btn-autoscroll");
+    if (btnScroll) {
+      btnScroll.addEventListener("click", () => {
+        state.autoScroll = !state.autoScroll;
+        btnScroll.classList.toggle("active", state.autoScroll);
+        btnScroll.title = state.autoScroll ? "Auto-scroll ativo" : "Auto-scroll pausado";
+        if (state.autoScroll) {
+          const term = $("#unified-terminal");
+          if (term) term.scrollTop = term.scrollHeight;
+        }
+      });
+    }
 
     // Pause Toggle
     const btnPause = $("#btn-toggle-pause");
@@ -320,11 +356,24 @@
     }
   }
 
-  // Init
-  function init() {
+  // Initialization
+  async function init() {
     bindEvents();
     setupEventSource();
-    renderPetState();
+
+    try {
+      const res = await fetch("/api/status");
+      if (res.ok) {
+        const data = await res.json();
+        if (data.sucesso && data.estado) {
+          state.pet = Object.assign({}, state.pet, data.estado);
+          renderPetState();
+        }
+      }
+    } catch (err) {
+      console.warn("Falha ao obter status inicial", err);
+    }
+
     if (window.lucide) {
       window.lucide.createIcons();
     }
