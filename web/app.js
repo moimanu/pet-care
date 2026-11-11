@@ -103,11 +103,15 @@
     const ts = formatLocalTime(entry.timestamp);
     const src = entry.component || "Sys";
 
+    const payloadHtml = entry.payload
+      ? ` <code class="log-payload">${escapeHtml(typeof entry.payload === "string" ? entry.payload : JSON.stringify(entry.payload))}</code>`
+      : "";
+
     row.innerHTML = `
       <span class="log-ts">${ts}</span>
       <span class="log-lvl ${lvl}">${lvl}</span>
       <span class="log-src">[${src}]</span>
-      <span class="log-msg">${escapeHtml(entry.message || "")}</span>
+      <span class="log-msg">${escapeHtml(entry.message || "")}${payloadHtml}</span>
     `;
     elLogFeed.appendChild(row);
     elLogFeed.scrollTop = elLogFeed.scrollHeight;

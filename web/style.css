@@ -457,6 +457,18 @@ main.dashboard-grid {
   flex: 1;
 }
 
+.log-payload {
+  color: #94a3b8;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  background: rgba(255, 255, 255, 0.04);
+  padding: 1px 4px;
+  border-radius: 3px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  margin-left: 4px;
+  word-break: break-all;
+}
+
 /* Feedback alert / toast */
 .feedback-box {
   padding: 8px 10px;
