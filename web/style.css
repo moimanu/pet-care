@@ -21,6 +21,29 @@
   box-sizing: border-box;
   margin: 0;
   padding: 0;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+*::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+  background: transparent;
+}
+
+[data-lucide],
+svg.lucide {
+  width: 13px;
+  height: 13px;
+  stroke-width: 1.8;
+  vertical-align: middle;
+  flex-shrink: 0;
+}
+
+.brand svg.lucide {
+  width: 15px;
+  height: 15px;
 }
 
 body {
@@ -112,7 +135,8 @@ main.dashboard-grid {
 }
 
 .panel-header {
-  padding: 12px 14px;
+  height: 48px;
+  padding: 0 14px;
   background-color: var(--surface);
   border-bottom: 1px solid var(--border);
   display: flex;
