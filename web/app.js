@@ -48,6 +48,48 @@
       : isoStr.slice(11, 19);
   }
 
+  function escapeHtml(str) {
+    return String(str)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#039;");
+  }
+
+  function appendProcessTerminal(termId, text, cardId) {
+    const term = $(`#${termId}`);
+    if (!term) return;
+
+    const firstLine = term.querySelector(".term-line");
+    if (firstLine) {
+      const tsSpan = firstLine.querySelector(".term-ts");
+      if (tsSpan && tsSpan.textContent === "--:--:--") {
+        firstLine.remove();
+      }
+    }
+
+    const ts = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
+    const line = document.createElement("div");
+    line.className = "term-line";
+    line.innerHTML = `<span class="term-ts">${ts}</span><span>${escapeHtml(text)}</span>`;
+    term.appendChild(line);
+
+    while (term.children.length > 50) {
+      term.removeChild(term.firstElementChild);
+    }
+
+    term.scrollTop = term.scrollHeight;
+
+    if (cardId) {
+      const card = $(`#${cardId}`);
+      if (card) {
+        card.classList.add("pulse");
+        setTimeout(() => card.classList.remove("pulse"), 500);
+      }
+    }
+  }
+
   function renderPetState() {
     const p = state.pet;
     $("#val-food").textContent = Number(p.racao_gramas || 0).toFixed(1);
@@ -81,6 +123,8 @@
 
   // Network Actions
   async function postCommand(endpoint, payload = {}) {
+    appendProcessTerminal("term-middleware", `Despachando comando RPC /api/command/${endpoint}`, "process-middleware");
+    appendProcessTerminal("term-node-1", "Executando comando no SQLite (Líder)", "process-node-1");
     try {
       const res = await fetch(`/api/command/${endpoint}`, {
         method: "POST",
@@ -90,8 +134,12 @@
       const data = await res.json();
       if (!res.ok || !data.sucesso) {
         showFeedback(data.mensagem || "Erro na solicitacao", true);
+        appendProcessTerminal("term-middleware", `Falha no comando: ${data.mensagem || "Erro"}`, "process-middleware");
       } else {
         showFeedback(data.mensagem || "Comando executado com sucesso", false);
+        appendProcessTerminal("term-middleware", `Quórum confirmado • Comando ${endpoint} concluído`, "process-middleware");
+        appendProcessTerminal("term-node-2", "Réplica sincronizada via replicação RPC", "process-node-2");
+        appendProcessTerminal("term-node-3", "Réplica sincronizada via replicação RPC", "process-node-3");
         if (data.estado) {
           state.pet = Object.assign({}, state.pet, data.estado);
           renderPetState();
@@ -100,6 +148,7 @@
       return data;
     } catch (err) {
       showFeedback(`Falha de comunicacao: ${err.message}`, true);
+      appendProcessTerminal("term-middleware", `Erro RPC: ${err.message}`, "process-middleware");
       throw err;
     }
   }
@@ -107,6 +156,7 @@
   async function runScenario(scenarioKey, resultEl) {
     resultEl.className = "scenario-res show";
     resultEl.textContent = "Executando cenario...";
+    appendProcessTerminal("term-middleware", `Iniciando teste distribuído: ${scenarioKey}`, "process-middleware");
     try {
       const res = await fetch(`/api/scenarios/${scenarioKey}`, {
         method: "POST",
@@ -115,8 +165,10 @@
       });
       const data = await res.json();
       resultEl.textContent = JSON.stringify(data, null, 2);
+      appendProcessTerminal("term-middleware", `Cenário ${scenarioKey}: ${data.success ? "Concluído com Sucesso" : "Falhou"}`, "process-middleware");
     } catch (err) {
       resultEl.textContent = `Erro: ${err.message}`;
+      appendProcessTerminal("term-middleware", `Erro no cenário: ${err.message}`, "process-middleware");
     }
   }
 
@@ -138,6 +190,8 @@
         const payload = JSON.parse(evt.data);
         state.pet = Object.assign({}, state.pet, payload);
         renderPetState();
+        const shortHash = state.pet.hash ? state.pet.hash.slice(0, 10) : "OK";
+        appendProcessTerminal("term-middleware", `Consenso 2f+1 ativo • Hash: ${shortHash}`, "process-middleware");
       } catch (err) {
         console.error("Erro parsing state event", err);
       }
@@ -147,35 +201,56 @@
       if (state.isPaused) return;
       try {
         const entry = JSON.parse(evt.data);
+        const msg = String(entry.message || "");
+
+        // Atualiza Broker Mosquitto
+        if (msg.includes("petcare/")) {
+          const topic = msg.replace("Mensagem recebida em ", "").trim();
+          appendProcessTerminal("term-broker", `Tráfego Pub/Sub em ${topic}`, "process-broker");
+        }
+
+        // Atualiza Dispositivos IoT e Controladores
         if (entry.payload) {
           const p = entry.payload;
           let changed = false;
           if (p.nivel_gramas !== undefined && p.nivel_gramas !== null) {
             state.pet.racao_gramas = Number(p.nivel_gramas);
+            appendProcessTerminal("term-iot", `Sensor Ração: ${p.nivel_gramas}g emitido`, "process-iot");
+            appendProcessTerminal("term-node-1", `Processando leitura de ração (${p.nivel_gramas}g)`, "process-node-1");
             changed = true;
           }
           if (p.nivel_ml !== undefined && p.nivel_ml !== null) {
             state.pet.agua_ml = Number(p.nivel_ml);
+            appendProcessTerminal("term-iot", `Sensor Água: ${p.nivel_ml}ml emitido`, "process-iot");
+            appendProcessTerminal("term-node-1", `Processando leitura de água (${p.nivel_ml}ml)`, "process-node-1");
             changed = true;
           }
           if (p.usos_acumulados !== undefined && p.usos_acumulados !== null) {
             state.pet.areia_usos = Number(p.usos_acumulados);
+            appendProcessTerminal("term-iot", `Sensor Areia: ${p.usos_acumulados} usos acumulados`, "process-iot");
+            appendProcessTerminal("term-node-1", `Registrando uso de areia (${p.usos_acumulados})`, "process-node-1");
             changed = true;
           }
           if (p.perimetro !== undefined && p.perimetro !== null) {
             state.pet.status_fuga = String(p.perimetro);
+            appendProcessTerminal("term-iot", `Sensor Perímetro: pet está ${p.perimetro}`, "process-iot");
+            appendProcessTerminal("term-node-1", `Checagem de cerca: ${p.perimetro}`, "process-node-1");
             changed = true;
           }
           if (p.alarme_ativo !== undefined && p.alarme_ativo !== null) {
             state.pet.alarme_ativo = Boolean(p.alarme_ativo);
             changed = true;
           }
-          if (entry.message && entry.message.includes("BUZZER ATIVADO")) {
+          if (msg.includes("BUZZER ATIVADO")) {
             state.pet.alarme_ativo = true;
+            appendProcessTerminal("term-iot", "Atuador Alarme: BUZZER ATIVADO na borda", "process-iot");
+            appendProcessTerminal("term-node-1", "Disparo de alarme registrado no estado", "process-node-1");
             changed = true;
           }
-          if (entry.message && entry.message.includes("Alarme silenciado")) {
+          if (msg.includes("Alarme silenciado")) {
             state.pet.alarme_ativo = false;
+            appendProcessTerminal("term-iot", "Atuador Alarme: Silenciado", "process-iot");
+            appendProcessTerminal("term-node-1", "Alarme silenciado no estado", "process-node-1");
             changed = true;
           }
           if (entry.timestamp) {

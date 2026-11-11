@@ -499,6 +499,39 @@ main.dashboard-grid {
   word-break: break-all;
 }
 
+.process-terminal {
+  margin-top: 6px;
+  padding: 6px 8px;
+  background: #06080a;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-size: 10px;
+  line-height: 1.45;
+  color: #cbd5e1;
+  max-height: 72px;
+  min-height: 44px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.term-line {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  word-break: break-all;
+}
+
+.term-ts {
+  color: var(--muted);
+  flex-shrink: 0;
+}
+
+.process-card.pulse {
+  border-color: #60a5fa;
+}
+
 /* Endpoints Directory */
 .endpoints-list {
   display: flex;

@@ -153,12 +153,15 @@
           </div>
           <div class="processes-list">
             <!-- 1. Broker MQTT -->
-            <div class="process-card">
+            <div class="process-card" id="process-broker">
               <div class="process-header">
                 <span class="process-name"><i data-lucide="radio" aria-hidden="true"></i> Broker Mosquitto</span>
                 <span class="badge badge-success">Porta 1883</span>
               </div>
               <div class="process-desc">TCP/MQTT • Barramento Pub/Sub de Telemetria e Atuadores</div>
+              <div class="process-terminal" id="term-broker">
+                <div class="term-line"><span class="term-ts">--:--:--</span><span>Aguardando tráfego MQTT...</span></div>
+              </div>
             </div>
 
             <!-- 2. Nó 1 -->
@@ -169,6 +172,9 @@
               </div>
               <div class="process-desc">Pyro5 RPC (petcare.controller.1) • SQLite (node_1.db)</div>
               <div class="process-hash" id="hash-node-1">hash: --</div>
+              <div class="process-terminal" id="term-node-1">
+                <div class="term-line"><span class="term-ts">--:--:--</span><span>Líder ativo em node_1.db</span></div>
+              </div>
             </div>
 
             <!-- 3. Nó 2 -->
@@ -179,6 +185,9 @@
               </div>
               <div class="process-desc">Pyro5 RPC (petcare.controller.2) • SQLite (node_2.db)</div>
               <div class="process-hash" id="hash-node-2">hash: --</div>
+              <div class="process-terminal" id="term-node-2">
+                <div class="term-line"><span class="term-ts">--:--:--</span><span>Réplica ativa em node_2.db</span></div>
+              </div>
             </div>
 
             <!-- 4. Nó 3 -->
@@ -189,24 +198,33 @@
               </div>
               <div class="process-desc">Pyro5 RPC (petcare.controller.3) • SQLite (node_3.db)</div>
               <div class="process-hash" id="hash-node-3">hash: --</div>
+              <div class="process-terminal" id="term-node-3">
+                <div class="term-line"><span class="term-ts">--:--:--</span><span>Réplica ativa em node_3.db</span></div>
+              </div>
             </div>
 
             <!-- 5. Middleware -->
-            <div class="process-card">
+            <div class="process-card" id="process-middleware">
               <div class="process-header">
                 <span class="process-name"><i data-lucide="shield" aria-hidden="true"></i> Middleware Pyro5</span>
                 <span class="badge badge-success">Porta 9090</span>
               </div>
               <div class="process-desc">Orquestrador BFT 2f+1 • Failover Transparente • Idempotência UUID</div>
+              <div class="process-terminal" id="term-middleware">
+                <div class="term-line"><span class="term-ts">--:--:--</span><span>Quórum 2f+1 em prontidão</span></div>
+              </div>
             </div>
 
             <!-- 6. IoT Edge -->
-            <div class="process-card">
+            <div class="process-card" id="process-iot">
               <div class="process-header">
                 <span class="process-name"><i data-lucide="cpu" aria-hidden="true"></i> Dispositivos IoT (Borda)</span>
                 <span class="badge badge-neutral">Ciclo 3.0s</span>
               </div>
               <div class="process-desc">Paho-MQTT • Sensores (Ração, Água, Areia, Fuga) • Atuadores</div>
+              <div class="process-terminal" id="term-iot">
+                <div class="term-line"><span class="term-ts">--:--:--</span><span>Simulador de borda ativo</span></div>
+              </div>
             </div>
           </div>
         </div>
