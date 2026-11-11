@@ -86,14 +86,21 @@
       : isoStr.slice(11, 19);
   }
 
+  function normalizeLevel(level) {
+    const l = String(level || "INFO").toUpperCase();
+    if (l === "WARNING" || l === "WARN") return "WARN";
+    if (l === "CRITICAL" || l === "ERROR" || l === "ERR") return "ERROR";
+    return l;
+  }
+
   function renderLogEntry(entry) {
-    if (state.filterLevel !== "ALL" && entry.level !== state.filterLevel) {
+    const lvl = normalizeLevel(entry.level);
+    if (state.filterLevel !== "ALL" && lvl !== state.filterLevel) {
       return;
     }
     const row = document.createElement("div");
     row.className = "log-entry";
     const ts = formatLocalTime(entry.timestamp);
-    const lvl = entry.level || "INFO";
     const src = entry.component || "Sys";
 
     row.innerHTML = `
@@ -109,7 +116,10 @@
   function rebuildLogs() {
     elLogFeed.innerHTML = "";
     state.logs.forEach(renderLogEntry);
-    elLogCount.textContent = `${state.logs.length} entradas`;
+    const visibleCount = state.filterLevel === "ALL"
+      ? state.logs.length
+      : state.logs.filter((e) => normalizeLevel(e.level) === state.filterLevel).length;
+    elLogCount.textContent = `${visibleCount} entradas`;
   }
 
   function escapeHtml(str) {

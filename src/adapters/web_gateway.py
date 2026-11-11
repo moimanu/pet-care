@@ -33,9 +33,10 @@ class WebGatewayLogHandler(logging.Handler):
 
     def emit(self, record: logging.LogRecord) -> None:
         try:
+            lvl = "WARN" if record.levelname == "WARNING" else record.levelname
             entry = {
                 "timestamp": datetime.fromtimestamp(record.created).astimezone().isoformat(),
-                "level": record.levelname,
+                "level": lvl,
                 "component": self.component or record.name,
                 "message": record.getMessage(),
                 "payload": getattr(record, "payload", None),
