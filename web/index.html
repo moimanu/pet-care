@@ -15,6 +15,10 @@
       <span class="brand-badge">BFT 2f+1</span>
     </div>
     <div class="header-meta">
+      <button id="btn-toggle-pause" class="btn btn-sm" aria-label="Pausar ou retomar atualizacoes" title="Pausar ou retomar">
+        <i data-lucide="pause" aria-hidden="true"></i>
+        <span id="label-pause-btn">Pausar</span>
+      </button>
       <div class="conn-indicator">
         <span id="conn-dot" class="conn-dot offline"></span>
         <span id="conn-text">Conectando SSE...</span>
@@ -25,13 +29,21 @@
 
   <main class="dashboard-grid">
     <!-- MODULO 1: PAINEL DO TUTOR -->
-    <section class="col-panel" id="module-tutor" aria-labelledby="tutor-title">
+    <section class="col-panel mobile-tutor-panel" id="module-tutor" aria-labelledby="tutor-title">
+      <div class="mobile-device-bar">
+        <span>09:41</span>
+        <div class="mobile-speaker-pill"></div>
+        <div class="mobile-bar-icons">
+          <i data-lucide="wifi" aria-hidden="true"></i>
+          <i data-lucide="battery" aria-hidden="true"></i>
+        </div>
+      </div>
       <div class="panel-header">
         <div class="panel-title" id="tutor-title">
-          <i data-lucide="user" aria-hidden="true"></i>
-          <span>Painel do Tutor</span>
+          <i data-lucide="smartphone" aria-hidden="true"></i>
+          <span>App Tutor Mobile</span>
         </div>
-        <span class="badge badge-neutral" id="tutor-badge">Ativo</span>
+        <span class="badge badge-neutral" id="tutor-badge">Online</span>
       </div>
 
       <div class="panel-content">

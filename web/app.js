@@ -9,6 +9,7 @@
   // State
   const state = {
     connected: false,
+    isPaused: false,
     filterLevel: "ALL",
     logs: [],
     maxLogs: 250,
@@ -188,6 +189,7 @@
     };
 
     sse.addEventListener("state", (evt) => {
+      if (state.isPaused) return;
       try {
         const payload = JSON.parse(evt.data);
         state.pet = Object.assign({}, state.pet, payload);
@@ -198,6 +200,7 @@
     });
 
     sse.addEventListener("log", (evt) => {
+      if (state.isPaused) return;
       try {
         const entry = JSON.parse(evt.data);
         state.logs.push(entry);
@@ -206,6 +209,47 @@
         }
         renderLogEntry(entry);
         elLogCount.textContent = `${state.logs.length} entradas`;
+
+        // Sincroniza estado do painel em tempo real a partir dos logs
+        if (entry.payload) {
+          const p = entry.payload;
+          let changed = false;
+          if (p.nivel_gramas !== undefined && p.nivel_gramas !== null) {
+            state.pet.racao_gramas = Number(p.nivel_gramas);
+            changed = true;
+          }
+          if (p.nivel_ml !== undefined && p.nivel_ml !== null) {
+            state.pet.agua_ml = Number(p.nivel_ml);
+            changed = true;
+          }
+          if (p.usos_acumulados !== undefined && p.usos_acumulados !== null) {
+            state.pet.areia_usos = Number(p.usos_acumulados);
+            changed = true;
+          }
+          if (p.perimetro !== undefined && p.perimetro !== null) {
+            state.pet.status_fuga = String(p.perimetro);
+            changed = true;
+          }
+          if (p.alarme_ativo !== undefined && p.alarme_ativo !== null) {
+            state.pet.alarme_ativo = Boolean(p.alarme_ativo);
+            changed = true;
+          }
+          if (entry.message && entry.message.includes("BUZZER ATIVADO")) {
+            state.pet.alarme_ativo = true;
+            changed = true;
+          }
+          if (entry.message && entry.message.includes("Alarme silenciado")) {
+            state.pet.alarme_ativo = false;
+            changed = true;
+          }
+          if (entry.timestamp) {
+            state.pet.atualizado_em = entry.timestamp;
+            changed = true;
+          }
+          if (changed) {
+            renderPetState();
+          }
+        }
       } catch (err) {
         console.error("Erro parsing log event", err);
       }
@@ -259,7 +303,28 @@
     $("#btn-run-sc4").addEventListener("click", () => runScenario("sanitization", $("#res-sc4")));
     $("#btn-run-sc5").addEventListener("click", () => runScenario("idempotency", $("#res-sc5")));
 
-    // Floating Tooltip for Log Payloads on Hover
+    // Pause Toggle
+    const btnPause = $("#btn-toggle-pause");
+    if (btnPause) {
+      btnPause.addEventListener("click", () => {
+        state.isPaused = !state.isPaused;
+        const label = $("#label-pause-btn");
+        if (state.isPaused) {
+          if (label) label.textContent = "Retomar";
+          btnPause.innerHTML = `<i data-lucide="play" aria-hidden="true"></i><span id="label-pause-btn">Retomar</span>`;
+          renderConnection(false, "Pausado");
+        } else {
+          if (label) label.textContent = "Pausar";
+          btnPause.innerHTML = `<i data-lucide="pause" aria-hidden="true"></i><span id="label-pause-btn">Pausar</span>`;
+          renderConnection(true, "SSE Ativo (Tempo Real)");
+        }
+        if (window.lucide) {
+          window.lucide.createIcons();
+        }
+      });
+    }
+
+    // Floating Tooltip for Log Payloads on Mouse Move
     let tooltip = $("#floating-tooltip");
     if (!tooltip) {
       tooltip = document.createElement("div");
@@ -268,7 +333,7 @@
       document.body.appendChild(tooltip);
     }
 
-    elLogFeed.addEventListener("mouseover", (e) => {
+    elLogFeed.addEventListener("mousemove", (e) => {
       const row = e.target.closest(".log-entry[data-has-payload='true']");
       if (!row || !row.dataset.payload) {
         tooltip.style.display = "none";
@@ -277,30 +342,27 @@
       try {
         const parsed = JSON.parse(row.dataset.payload);
         const formatted = JSON.stringify(parsed, null, 2);
-        tooltip.innerHTML = `<div class="tooltip-header">Payload JSON</div><pre><code>${escapeHtml(formatted)}</code></pre>`;
+        tooltip.innerHTML = `<pre><code>${escapeHtml(formatted)}</code></pre>`;
         tooltip.style.display = "block";
 
-        const rect = row.getBoundingClientRect();
-        let top = rect.top - tooltip.offsetHeight - 8;
-        if (top < 10) {
-          top = rect.bottom + 8;
+        let top = e.clientY + 12;
+        let left = e.clientX + 14;
+
+        if (left + tooltip.offsetWidth > window.innerWidth - 12) {
+          left = e.clientX - tooltip.offsetWidth - 14;
         }
-        let left = Math.max(16, rect.left + 40);
-        if (left + tooltip.offsetWidth > window.innerWidth - 16) {
-          left = window.innerWidth - tooltip.offsetWidth - 16;
+        if (top + tooltip.offsetHeight > window.innerHeight - 12) {
+          top = e.clientY - tooltip.offsetHeight - 14;
         }
-        tooltip.style.top = `${top}px`;
-        tooltip.style.left = `${left}px`;
+        tooltip.style.top = `${Math.max(6, top)}px`;
+        tooltip.style.left = `${Math.max(6, left)}px`;
       } catch (err) {
         tooltip.style.display = "none";
       }
     });
 
-    elLogFeed.addEventListener("mouseout", (e) => {
-      const row = e.target.closest(".log-entry");
-      if (row && (!e.relatedTarget || !row.contains(e.relatedTarget))) {
-        tooltip.style.display = "none";
-      }
+    elLogFeed.addEventListener("mouseleave", () => {
+      tooltip.style.display = "none";
     });
   }
 
