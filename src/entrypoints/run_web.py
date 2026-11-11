@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import argparse
+from datetime import datetime, timezone
+import json
 import logging
 import os
 from pathlib import Path
@@ -62,8 +64,13 @@ def run_scenario_5_idempotency(tmpdir: str) -> dict[str, Any]:
 def make_mqtt_message_handler(gateway: WebGateway) -> Callable[[str, dict[str, Any]], None]:
     """Creates a callback function forwarding MQTT sensor/actuator messages to SSE."""
     def on_mqtt_message(topic: str, payload: dict[str, Any]) -> None:
+        ts = payload.get("timestamp") or datetime.now(timezone.utc).isoformat()
+        gateway.broadcast("raw_log", {
+            "source": "broker",
+            "line": f"{ts} [INFO] (MQTT-Broker) Mensagem em {topic}: {json.dumps(payload)}",
+        })
         gateway.broadcast("log", {
-            "timestamp": payload.get("timestamp", ""),
+            "timestamp": ts,
             "level": "INFO",
             "component": "MQTT Edge",
             "message": f"Mensagem recebida em {topic}",
@@ -77,6 +84,7 @@ def build_web_server(
     port: int = 8080,
     middleware: Optional[Any] = None,
     static_dir: Optional[str] = "web",
+    logs_dir: Optional[str] = "logs",
 ) -> WebGateway:
     """Configures and returns WebGateway with all REST, SSE and scenario routes."""
     gateway = WebGateway(
@@ -84,6 +92,7 @@ def build_web_server(
         port=port,
         middleware=middleware,
         static_dir=static_dir,
+        logs_dir=logs_dir,
     )
 
     def _scenario_wrapper(fn: Callable[[str], dict[str, Any]]) -> Callable[[dict[str, Any]], dict[str, Any]]:
@@ -111,6 +120,7 @@ def main() -> None:
         help="URI Pyro5 do Middleware",
     )
     parser.add_argument("--static-dir", default="web", help="Diretório de assets estáticos")
+    parser.add_argument("--logs-dir", default="logs", help="Diretório de logs a monitorar")
     parser.add_argument("--mqtt-host", default="localhost", help="Host do broker MQTT")
     parser.add_argument("--mqtt-port", type=int, default=1883, help="Porta do broker MQTT")
     parser.add_argument("--no-mqtt", action="store_true", help="Desabilitar conexão MQTT")
@@ -129,6 +139,7 @@ def main() -> None:
         port=args.port,
         middleware=proxy,
         static_dir=args.static_dir,
+        logs_dir=args.logs_dir,
     )
 
     # Attach SSE log streamer to root logger

@@ -88,9 +88,13 @@ def test_mqtt_message_handler_broadcasts(running_web_server):
     handler = make_mqtt_message_handler(running_web_server)
     try:
         handler("petcare/sensores/racao", {"nivel_gramas": 120.0, "timestamp": "2026-11-10T12:00:00Z"})
-        msg = sub.get(timeout=2.0)
-        assert "event: log" in msg
-        assert "racao" in msg
+        msg_raw = sub.get(timeout=2.0)
+        assert "event: raw_log" in msg_raw
+        assert "MQTT-Broker" in msg_raw
+
+        msg_log = sub.get(timeout=2.0)
+        assert "event: log" in msg_log
+        assert "racao" in msg_log
     finally:
         running_web_server.unsubscribe_sse(sub)
 

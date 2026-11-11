@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import deque
 from datetime import datetime, timezone
 import http.server
 import json
@@ -8,6 +9,7 @@ from pathlib import Path
 import queue
 import socketserver
 import threading
+import time
 from typing import Any, Callable, Mapping, Optional
 
 logger = logging.getLogger(__name__)
@@ -44,6 +46,115 @@ class WebGatewayLogHandler(logging.Handler):
             self.gateway.broadcast("log", entry)
         except Exception:
             self.handleError(record)
+
+
+class LogFileTailer:
+    """Continuously tails raw process log files (*.log) and streams lines over SSE."""
+
+    SOURCE_MAP = {
+        "controller_1": "node-1",
+        "controller_2": "node-2",
+        "controller_3": "node-3",
+        "middleware": "middleware",
+        "iot_devices": "iot",
+        "web_server": "web",
+    }
+
+    def __init__(
+        self,
+        gateway: WebGateway,
+        logs_dir: str | Path = "logs",
+        poll_interval: float = 0.25,
+        initial_lines: int = 20,
+    ) -> None:
+        self.gateway = gateway
+        self.logs_dir = Path(logs_dir)
+        self.poll_interval = poll_interval
+        self.initial_lines = initial_lines
+        self._offsets: dict[str, int] = {}
+        self._history: deque[dict[str, str]] = deque(maxlen=200)
+        self._lock = threading.Lock()
+        self._running = False
+        self._thread: Optional[threading.Thread] = None
+
+    def get_recent_history(self) -> list[dict[str, str]]:
+        with self._lock:
+            return list(self._history)
+
+    def _append_and_broadcast(self, source_id: str, line: str) -> None:
+        entry = {"source": source_id, "line": line}
+        with self._lock:
+            self._history.append(entry)
+        self.gateway.broadcast("raw_log", entry)
+
+    def _read_recent_lines(self, file_path: Path, max_lines: int) -> list[str]:
+        try:
+            with open(file_path, "r", encoding="utf-8", errors="replace") as f:
+                lines = f.readlines()
+                return lines[-max_lines:] if len(lines) > max_lines else lines
+        except Exception:
+            return []
+
+    def poll_once(self) -> None:
+        if not self.logs_dir.is_dir():
+            return
+
+        for log_file in sorted(self.logs_dir.glob("*.log")):
+            stem = log_file.stem
+            source_id = self.SOURCE_MAP.get(stem, stem)
+            file_key = str(log_file)
+
+            if file_key not in self._offsets:
+                recent = self._read_recent_lines(log_file, self.initial_lines)
+                for line in recent:
+                    clean_line = line.rstrip("\r\n")
+                    if clean_line:
+                        self._append_and_broadcast(source_id, clean_line)
+                try:
+                    self._offsets[file_key] = log_file.stat().st_size
+                except OSError:
+                    self._offsets[file_key] = 0
+                continue
+
+            try:
+                current_size = log_file.stat().st_size
+            except OSError:
+                continue
+
+            last_offset = self._offsets.get(file_key, 0)
+            if current_size < last_offset:
+                last_offset = 0
+
+            if current_size > last_offset:
+                try:
+                    with open(log_file, "r", encoding="utf-8", errors="replace") as f:
+                        f.seek(last_offset)
+                        new_content = f.read()
+                        self._offsets[file_key] = f.tell()
+                        for line in new_content.splitlines():
+                            clean_line = line.rstrip("\r\n")
+                            if clean_line:
+                                self._append_and_broadcast(source_id, clean_line)
+                except Exception as exc:
+                    logger.debug("Falha ao ler arquivo de log %s: %s", log_file, exc)
+
+    def _loop(self) -> None:
+        while self._running:
+            self.poll_once()
+            time.sleep(self.poll_interval)
+
+    def start(self) -> None:
+        if self._running:
+            return
+        self._running = True
+        self._thread = threading.Thread(target=self._loop, daemon=True)
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._running = False
+        if self._thread and self._thread.is_alive():
+            self._thread.join(timeout=1.0)
+            self._thread = None
 
 
 class _GatewayHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
@@ -89,6 +200,10 @@ class _GatewayHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
             self._handle_get_status()
         elif path in ("/api/events", "/events", "/stream"):
             self._handle_sse()
+        elif path in ("/docs", "/swagger"):
+            self._handle_static("docs.html")
+        elif path == "/openapi.json":
+            self._handle_static("openapi.json")
         else:
             self._handle_static(path)
 
@@ -181,6 +296,16 @@ class _GatewayHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
             except Exception as exc:
                 logger.debug("Falha ao enviar estado inicial SSE: %s", exc)
 
+        # Send recent raw logs to populate terminal immediately on connection
+        if gateway.tailer is not None:
+            try:
+                for entry in gateway.tailer.get_recent_history():
+                    raw_data = f"event: raw_log\ndata: {json.dumps(entry)}\n\n".encode("utf-8")
+                    self.wfile.write(raw_data)
+                self.wfile.flush()
+            except Exception as exc:
+                logger.debug("Falha ao enviar historico inicial de logs SSE: %s", exc)
+
         try:
             while gateway.is_running:
                 try:
@@ -247,11 +372,17 @@ class WebGateway:
         port: int = 8080,
         middleware: Optional[Any] = None,
         static_dir: Optional[str] = None,
+        logs_dir: Optional[str] = None,
     ) -> None:
         self.host = host
         self._requested_port = port
         self.middleware = middleware
         self.static_dir = static_dir
+        self.logs_dir = logs_dir
+        self.tailer: Optional[LogFileTailer] = None
+        if self.logs_dir:
+            self.tailer = LogFileTailer(gateway=self, logs_dir=self.logs_dir)
+
         self.scenario_handlers: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {}
 
         self._clients_lock = threading.Lock()
@@ -308,12 +439,17 @@ class WebGateway:
         self._is_running = True
         self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
         self._thread.start()
+        if self.tailer is not None:
+            self.tailer.start()
         logger.info("WebGateway iniciado em http://%s:%d", self.host, self.port)
 
     def stop(self) -> None:
         if not self._is_running:
             return
         self._is_running = False
+        if self.tailer is not None:
+            self.tailer.stop()
+            self.tailer = None
         if self._server is not None:
             self._server.shutdown()
             self._server.server_close()

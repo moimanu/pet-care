@@ -1,0 +1,226 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "PetCare Distributed System API",
+    "version": "1.0.0",
+    "description": "API REST e SSE do Sistema Distribuído de Pet Care. O Gateway traduz requisições para o Middleware Pyro5 RPC (consenso bizantino 2f+1, failover e idempotência) e interage com o broker MQTT Mosquitto."
+  },
+  "servers": [
+    {
+      "url": "/",
+      "description": "Servidor Local PetCare"
+    }
+  ],
+  "paths": {
+    "/api/status": {
+      "get": {
+        "summary": "Consenso de Estado (Quórum Bizantino 2f+1)",
+        "description": "Consulta em paralelo os 3 nós controladores via Pyro5 RPC e retorna o estado acordado pela maioria acompanhado do hash canônico SHA-256.",
+        "responses": {
+          "200": {
+            "description": "Estado consolidado obtido com sucesso",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Middleware indisponível ou quórum não atingido"
+          }
+        }
+      }
+    },
+    "/api/events": {
+      "get": {
+        "summary": "Stream Server-Sent Events (SSE)",
+        "description": "Canal contínuo de eventos assíncronos transmitindo atualizações de estado (event: state) e logs brutos dos processos (event: raw_log).",
+        "responses": {
+          "200": {
+            "description": "Conexão SSE estabelecida",
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/command/dispense_food": {
+      "post": {
+        "summary": "Dispensar Ração Manualmente",
+        "description": "Envia comando com idempotência UUID para o nó primário liberar ração através do dispenser na borda IoT.",
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "quantidade": {
+                    "type": "number",
+                    "default": 50.0,
+                    "description": "Quantidade em gramas a dispensar"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Comando processado",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommandResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/command/refill_water": {
+      "post": {
+        "summary": "Repor Água Manualmente",
+        "description": "Envia comando com idempotência UUID para o nó primário acionar a válvula solenoide de reposição de água.",
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "quantidade": {
+                    "type": "number",
+                    "default": 200.0,
+                    "description": "Quantidade em mililitros a repor"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Comando processado",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommandResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/command/clean_litter": {
+      "post": {
+        "summary": "Zerar Contador da Caixa de Areia",
+        "description": "Registra a higienização física da caixa de areia, resetando o contador de usos acumulados.",
+        "responses": {
+          "200": {
+            "description": "Caixa de areia resetada",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommandResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/command/silence_alarm": {
+      "post": {
+        "summary": "Silenciar Alarme de Fuga",
+        "description": "Desarma a sirene física na borda IoT caso tenha sido disparada por violação do perímetro.",
+        "responses": {
+          "200": {
+            "description": "Alarme silenciado",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommandResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/scenarios/{scenario_name}": {
+      "post": {
+        "summary": "Executar Cenário Experimental de Auditoria",
+        "description": "Executa de forma isolada um dos cenários distribuídos em ambiente temporário de auditoria.",
+        "parameters": [
+          {
+            "name": "scenario_name",
+            "in": "path",
+            "required": true,
+            "description": "Identificador do cenário",
+            "schema": {
+              "type": "string",
+              "enum": ["nominal", "failover", "byzantine", "sanitization", "idempotency"]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Resultado detalhado da execução do cenário",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": { "type": "boolean" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "PetState": {
+        "type": "object",
+        "properties": {
+          "racao_gramas": { "type": "number", "example": 185.0 },
+          "agua_ml": { "type": "number", "example": 450.0 },
+          "areia_usos": { "type": "integer", "example": 1 },
+          "status_fuga": { "type": "string", "example": "DENTRO" },
+          "alarme_ativo": { "type": "boolean", "example": false },
+          "hash": { "type": "string", "example": "a4b5c6..." },
+          "atualizado_em": { "type": "string", "example": "2026-11-11T13:20:00Z" }
+        }
+      },
+      "StatusResponse": {
+        "type": "object",
+        "properties": {
+          "sucesso": { "type": "boolean", "example": true },
+          "estado": { "$ref": "#/components/schemas/PetState" }
+        }
+      },
+      "CommandResponse": {
+        "type": "object",
+        "properties": {
+          "sucesso": { "type": "boolean", "example": true },
+          "mensagem": { "type": "string", "example": "Comando executado com sucesso" },
+          "estado": { "$ref": "#/components/schemas/PetState" }
+        }
+      }
+    }
+  }
+}
+

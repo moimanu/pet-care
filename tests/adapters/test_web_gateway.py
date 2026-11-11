@@ -184,3 +184,70 @@ def test_not_found(gateway):
         urllib.request.urlopen(url)
     assert exc_info.value.code == 404
 
+
+def test_get_docs_swagger(static_dir, mock_middleware):
+    # Ensure docs.html is written in static_dir
+    docs_file = Path(static_dir) / "docs.html"
+    docs_file.write_text("<!DOCTYPE html><html><body><div id='swagger-ui'></div></body></html>", encoding="utf-8")
+    server = WebGateway(host="127.0.0.1", port=0, middleware=mock_middleware, static_dir=static_dir)
+    server.start()
+    try:
+        url = f"http://127.0.0.1:{server.port}/docs"
+        with urllib.request.urlopen(url) as resp:
+            assert resp.status == 200
+            assert "swagger-ui" in resp.read().decode("utf-8")
+    finally:
+        server.stop()
+
+
+def test_get_openapi_json(static_dir, mock_middleware):
+    openapi_file = Path(static_dir) / "openapi.json"
+    openapi_file.write_text('{"openapi": "3.0.3", "info": {"title": "Test API"}}', encoding="utf-8")
+    server = WebGateway(host="127.0.0.1", port=0, middleware=mock_middleware, static_dir=static_dir)
+    server.start()
+    try:
+        url = f"http://127.0.0.1:{server.port}/openapi.json"
+        with urllib.request.urlopen(url) as resp:
+            assert resp.status == 200
+            data = json.loads(resp.read().decode("utf-8"))
+            assert data["info"]["title"] == "Test API"
+    finally:
+        server.stop()
+
+
+def test_log_file_tailer_streams_raw_logs(mock_middleware):
+    from src.adapters.web_gateway import LogFileTailer
+
+    with tempfile.TemporaryDirectory() as tmp_logs:
+        logs_path = Path(tmp_logs)
+        c1_log = logs_path / "controller_1.log"
+        c1_log.write_text("2026-11-11 [INFO] Initial node line\n", encoding="utf-8")
+
+        server = WebGateway(
+            host="127.0.0.1",
+            port=0,
+            middleware=mock_middleware,
+            logs_dir=None,
+        )
+        server.start()
+        client_q = server.subscribe_sse()
+        tailer = LogFileTailer(gateway=server, logs_dir=str(logs_path), poll_interval=0.1)
+        try:
+            tailer.poll_once()
+            msg = client_q.get(timeout=2.0)
+            assert "event: raw_log" in msg
+            assert "Initial node line" in msg
+            assert '"source": "node-1"' in msg
+
+            with open(c1_log, "a", encoding="utf-8") as f:
+                f.write("2026-11-11 [WARN] Dynamic warning line\n")
+
+            tailer.poll_once()
+            msg2 = client_q.get(timeout=2.0)
+            assert "event: raw_log" in msg2
+            assert "Dynamic warning line" in msg2
+        finally:
+            server.unsubscribe_sse(client_q)
+            server.stop()
+
+
