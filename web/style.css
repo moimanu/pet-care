@@ -450,173 +450,93 @@ main.dashboard-grid {
   border-color: var(--accent);
 }
 
-/* Byzantine Consensus Inspector */
-.nodes-grid {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
+/* Processes and Topology Grid */
+.processes-list {
+  display: flex;
+  flex-direction: column;
   gap: 8px;
-  margin-bottom: 10px;
 }
 
-.node-card {
+.process-card {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 8px;
+  padding: 9px 11px;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 3px;
 }
 
-.node-card.divergent {
+.process-card.divergent {
   border-color: var(--danger);
   background: rgba(239, 68, 68, 0.05);
 }
 
-.node-header {
+.process-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  font-size: 11px;
-  font-weight: 600;
 }
 
-.node-hash {
+.process-name {
+  font-size: 12px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.process-desc {
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.35;
+}
+
+.process-hash {
   font-size: 10px;
   color: var(--muted);
+  margin-top: 2px;
   word-break: break-all;
 }
 
-/* Terminal Console */
-.terminal-wrapper {
-  flex: 1;
+/* Endpoints Directory */
+.endpoints-list {
   display: flex;
   flex-direction: column;
-  min-height: 0;
-  background: #06080a;
+  gap: 6px;
+}
+
+.endpoint-link,
+.endpoint-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  overflow: hidden;
-}
-
-.terminal-toolbar {
-  padding: 6px 10px;
-  background: var(--surface-alt);
-  border-bottom: 1px solid var(--border);
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  font-size: 11px;
-}
-
-.filter-group {
-  display: flex;
-  gap: 4px;
-}
-
-.filter-btn {
-  background: none;
-  border: 1px solid transparent;
-  color: var(--muted);
-  font-size: 10px;
-  padding: 2px 6px;
-  border-radius: 3px;
-  cursor: pointer;
-  text-transform: uppercase;
-}
-
-.filter-btn.active {
-  background: var(--surface);
-  border-color: var(--border);
+  text-decoration: none;
   color: var(--text);
-  font-weight: 600;
+  font-size: 12px;
 }
 
-.terminal-body {
-  flex: 1;
-  overflow-y: auto;
-  padding: 8px;
-  font-size: 11px;
-  line-height: 1.5;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
+.endpoint-link {
+  transition: background 0.15s, border-color 0.15s;
 }
 
-.log-entry {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  padding: 2px 4px;
-  border-radius: 2px;
-}
-
-.log-entry:hover {
-  background: var(--surface-alt);
-}
-
-.log-ts {
-  color: var(--muted);
-  flex-shrink: 0;
-}
-
-.log-lvl {
-  padding: 0 4px;
-  border-radius: 2px;
-  font-weight: 600;
-  font-size: 9px;
-  flex-shrink: 0;
-}
-
-.log-lvl.INFO { color: #60a5fa; background: rgba(96, 165, 250, 0.12); }
-.log-lvl.WARN, .log-lvl.WARNING { color: var(--warning); background: rgba(245, 158, 11, 0.12); }
-.log-lvl.ERROR, .log-lvl.CRITICAL { color: var(--danger); background: rgba(239, 68, 68, 0.15); }
-
-.log-src {
-  color: var(--muted);
-  flex-shrink: 0;
-  max-width: 110px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.log-msg {
-  color: var(--text);
-  word-break: break-word;
-  flex: 1;
-}
-
-.log-entry[data-has-payload="true"] {
-  cursor: pointer;
-}
-
-.log-entry[data-has-payload="true"]:hover {
+.endpoint-link:hover {
   background: var(--surface-hover);
+  border-color: var(--border-light);
 }
 
-.floating-tooltip {
-  display: none;
-  position: fixed;
-  z-index: 9999;
-  background: #0f141c;
-  border: 1px solid var(--border-light);
-  border-radius: var(--radius);
-  padding: 6px 10px;
-  box-shadow: none;
-  pointer-events: none;
-  font-size: 11px;
-  color: #e2e8f0;
-  max-width: 420px;
-  max-height: 280px;
-  overflow: auto;
-  line-height: 1.45;
+.endpoint-path {
+  font-size: 12px;
+  color: var(--text);
+  flex: 1;
 }
 
-.floating-tooltip pre {
-  margin: 0;
-  white-space: pre-wrap;
-  word-break: break-all;
+.endpoint-link i {
+  color: var(--muted);
 }
 
 /* Feedback alert / toast */

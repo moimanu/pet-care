@@ -134,65 +134,117 @@
       </div>
     </section>
 
-    <!-- MODULO 2: OBSERVABILIDADE E LOGS -->
-    <section class="col-panel" id="module-logs" aria-labelledby="logs-title">
+    <!-- MODULO 2: PROCESSOS & ENDPOINTS -->
+    <section class="col-panel" id="module-processes" aria-labelledby="processes-title">
       <div class="panel-header">
-        <div class="panel-title" id="logs-title">
-          <i data-lucide="terminal" aria-hidden="true"></i>
-          <span>Observabilidade e Logs</span>
+        <div class="panel-title" id="processes-title">
+          <i data-lucide="cpu" aria-hidden="true"></i>
+          <span>Processos & Endpoints</span>
         </div>
-        <div style="display: flex; gap: 6px;">
-          <button id="btn-clear-logs" class="btn btn-sm" aria-label="Limpar console">
-            <i data-lucide="trash-2" aria-hidden="true"></i>
-            <span>Limpar</span>
-          </button>
-        </div>
+        <span class="badge badge-success">6 Nós Ativos</span>
       </div>
 
-      <div class="panel-content" style="padding-bottom: 8px;">
-        <!-- Inspetor de Consenso Bizantino -->
-        <div class="card" style="padding: 10px;">
+      <div class="panel-content">
+        <!-- 6 Processos Distribuídos -->
+        <div class="card">
           <div class="card-title">
-            <span>Inspetor Quorum Bizantino (2f+1)</span>
-            <span id="quorum-badge" class="badge badge-success">Consenso OK</span>
+            <span>Processos do Sistema Distribuído</span>
+            <i data-lucide="network" aria-hidden="true"></i>
           </div>
-          <div class="nodes-grid">
-            <div class="node-card" id="card-node-1">
-              <div class="node-header">
-                <span>No 1 (Lider)</span>
-                <span class="badge badge-neutral" id="badge-node-1">OK</span>
+          <div class="processes-list">
+            <!-- 1. Broker MQTT -->
+            <div class="process-card">
+              <div class="process-header">
+                <span class="process-name"><i data-lucide="radio" aria-hidden="true"></i> Broker Mosquitto</span>
+                <span class="badge badge-success">Porta 1883</span>
               </div>
-              <div class="node-hash" id="hash-node-1">hash: --</div>
+              <div class="process-desc">TCP/MQTT • Barramento Pub/Sub de Telemetria e Atuadores</div>
             </div>
-            <div class="node-card" id="card-node-2">
-              <div class="node-header">
-                <span>No 2 (Replica)</span>
-                <span class="badge badge-neutral" id="badge-node-2">OK</span>
+
+            <!-- 2. Nó 1 -->
+            <div class="process-card" id="process-node-1">
+              <div class="process-header">
+                <span class="process-name"><i data-lucide="server" aria-hidden="true"></i> Controlador 1 (Líder)</span>
+                <span class="badge badge-success" id="badge-node-1">Porta 9091</span>
               </div>
-              <div class="node-hash" id="hash-node-2">hash: --</div>
+              <div class="process-desc">Pyro5 RPC (petcare.controller.1) • SQLite (node_1.db)</div>
+              <div class="process-hash" id="hash-node-1">hash: --</div>
             </div>
-            <div class="node-card" id="card-node-3">
-              <div class="node-header">
-                <span>No 3 (Replica)</span>
-                <span class="badge badge-neutral" id="badge-node-3">OK</span>
+
+            <!-- 3. Nó 2 -->
+            <div class="process-card" id="process-node-2">
+              <div class="process-header">
+                <span class="process-name"><i data-lucide="server" aria-hidden="true"></i> Controlador 2 (Réplica)</span>
+                <span class="badge badge-neutral" id="badge-node-2">Porta 9092</span>
               </div>
-              <div class="node-hash" id="hash-node-3">hash: --</div>
+              <div class="process-desc">Pyro5 RPC (petcare.controller.2) • SQLite (node_2.db)</div>
+              <div class="process-hash" id="hash-node-2">hash: --</div>
+            </div>
+
+            <!-- 4. Nó 3 -->
+            <div class="process-card" id="process-node-3">
+              <div class="process-header">
+                <span class="process-name"><i data-lucide="server" aria-hidden="true"></i> Controlador 3 (Réplica)</span>
+                <span class="badge badge-neutral" id="badge-node-3">Porta 9093</span>
+              </div>
+              <div class="process-desc">Pyro5 RPC (petcare.controller.3) • SQLite (node_3.db)</div>
+              <div class="process-hash" id="hash-node-3">hash: --</div>
+            </div>
+
+            <!-- 5. Middleware -->
+            <div class="process-card">
+              <div class="process-header">
+                <span class="process-name"><i data-lucide="shield" aria-hidden="true"></i> Middleware Pyro5</span>
+                <span class="badge badge-success">Porta 9090</span>
+              </div>
+              <div class="process-desc">Orquestrador BFT 2f+1 • Failover Transparente • Idempotência UUID</div>
+            </div>
+
+            <!-- 6. IoT Edge -->
+            <div class="process-card">
+              <div class="process-header">
+                <span class="process-name"><i data-lucide="cpu" aria-hidden="true"></i> Dispositivos IoT (Borda)</span>
+                <span class="badge badge-neutral">Ciclo 3.0s</span>
+              </div>
+              <div class="process-desc">Paho-MQTT • Sensores (Ração, Água, Areia, Fuga) • Atuadores</div>
             </div>
           </div>
         </div>
 
-        <!-- Terminal de Logs SSE -->
-        <div class="terminal-wrapper">
-          <div class="terminal-toolbar">
-            <div class="filter-group">
-              <button class="filter-btn active" data-filter="ALL">Todos</button>
-              <button class="filter-btn" data-filter="INFO">Info</button>
-              <button class="filter-btn" data-filter="WARN">Warn</button>
-              <button class="filter-btn" data-filter="ERROR">Error</button>
-            </div>
-            <span style="color: var(--muted); font-size: 10px;" id="log-count">0 entradas</span>
+        <!-- Endpoints Importantes -->
+        <div class="card">
+          <div class="card-title">
+            <span>Endpoints HTTP / REST & Streaming</span>
+            <i data-lucide="link" aria-hidden="true"></i>
           </div>
-          <div class="terminal-body" id="log-feed" role="log" aria-live="polite"></div>
+          <div class="endpoints-list">
+            <a href="/api/status" target="_blank" class="endpoint-link" title="Consultar JSON do estado consolidado por quórum">
+              <span class="badge badge-neutral">GET</span>
+              <span class="endpoint-path">/api/status</span>
+              <i data-lucide="external-link" aria-hidden="true"></i>
+            </a>
+            <a href="/api/events" target="_blank" class="endpoint-link" title="Canal contínuo de Server-Sent Events">
+              <span class="badge badge-neutral">GET</span>
+              <span class="endpoint-path">/api/events</span>
+              <i data-lucide="external-link" aria-hidden="true"></i>
+            </a>
+            <div class="endpoint-item">
+              <span class="badge badge-neutral">POST</span>
+              <span class="endpoint-path">/api/command/dispense_food</span>
+            </div>
+            <div class="endpoint-item">
+              <span class="badge badge-neutral">POST</span>
+              <span class="endpoint-path">/api/command/refill_water</span>
+            </div>
+            <div class="endpoint-item">
+              <span class="badge badge-neutral">POST</span>
+              <span class="endpoint-path">/api/command/clean_litter</span>
+            </div>
+            <div class="endpoint-item">
+              <span class="badge badge-neutral">POST</span>
+              <span class="endpoint-path">/api/command/silence_alarm</span>
+            </div>
+          </div>
         </div>
       </div>
     </section>

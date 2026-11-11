@@ -1,18 +1,14 @@
 /**
- * PetCare Distributed System - Vanilla Minimal Dashboard
+ * PetCare Distributed System - Dashboard
  * Zero emojis, clean state-actions-view separation, SSE-driven.
  */
 (() => {
   const $ = (sel, ctx = document) => ctx.querySelector(sel);
-  const $$ = (sel, ctx = document) => Array.from(ctx.querySelectorAll(sel));
 
   // State
   const state = {
     connected: false,
     isPaused: false,
-    filterLevel: "ALL",
-    logs: [],
-    maxLogs: 250,
     pet: {
       racao_gramas: 0.0,
       agua_ml: 0.0,
@@ -22,11 +18,6 @@
       hash: "",
       atualizado_em: "",
     },
-    nodes: {
-      1: { hash: "--", status: "OK", is_primary: true },
-      2: { hash: "--", status: "OK", is_primary: false },
-      3: { hash: "--", status: "OK", is_primary: false },
-    },
   };
 
   // View Helpers & DOM elements
@@ -34,8 +25,6 @@
   const elConnText = $("#conn-text");
   const elSyncTime = $("#last-sync-time");
   const elFeedback = $("#action-feedback");
-  const elLogFeed = $("#log-feed");
-  const elLogCount = $("#log-count");
 
   function showFeedback(message, isError = false) {
     elFeedback.textContent = message;
@@ -49,6 +38,14 @@
     state.connected = status;
     elConnDot.className = `conn-dot ${status ? "online" : "offline"}`;
     elConnText.textContent = label;
+  }
+
+  function formatLocalTime(isoStr) {
+    if (!isoStr) return new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
+    const d = new Date(isoStr);
+    return !isNaN(d.getTime())
+      ? d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false })
+      : isoStr.slice(11, 19);
   }
 
   function renderPetState() {
@@ -69,70 +66,17 @@
 
     if (p.hash) {
       const shortHash = p.hash.slice(0, 14);
-      $("#hash-node-1").textContent = `hash: ${shortHash}...`;
-      $("#hash-node-2").textContent = `hash: ${shortHash}...`;
-      $("#hash-node-3").textContent = `hash: ${shortHash}...`;
+      const h1 = $("#hash-node-1");
+      const h2 = $("#hash-node-2");
+      const h3 = $("#hash-node-3");
+      if (h1) h1.textContent = `hash: ${shortHash}...`;
+      if (h2) h2.textContent = `hash: ${shortHash}...`;
+      if (h3) h3.textContent = `hash: ${shortHash}...`;
     }
 
     if (p.atualizado_em) {
       elSyncTime.textContent = `Ultima sincronizacao: ${formatLocalTime(p.atualizado_em)}`;
     }
-  }
-
-  function formatLocalTime(isoStr) {
-    if (!isoStr) return new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
-    const d = new Date(isoStr);
-    return !isNaN(d.getTime())
-      ? d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false })
-      : isoStr.slice(11, 19);
-  }
-
-  function normalizeLevel(level) {
-    const l = String(level || "INFO").toUpperCase();
-    if (l === "WARNING" || l === "WARN") return "WARN";
-    if (l === "CRITICAL" || l === "ERROR" || l === "ERR") return "ERROR";
-    return l;
-  }
-
-  function renderLogEntry(entry) {
-    const lvl = normalizeLevel(entry.level);
-    if (state.filterLevel !== "ALL" && lvl !== state.filterLevel) {
-      return;
-    }
-    const row = document.createElement("div");
-    row.className = "log-entry";
-    const ts = formatLocalTime(entry.timestamp);
-    const src = entry.component || "Sys";
-
-    if (entry.payload) {
-      row.dataset.hasPayload = "true";
-      row.dataset.payload = typeof entry.payload === "string" ? entry.payload : JSON.stringify(entry.payload);
-    }
-
-    row.innerHTML = `
-      <span class="log-ts">${ts}</span>
-      <span class="log-lvl ${lvl}">${lvl}</span>
-      <span class="log-src">[${src}]</span>
-      <span class="log-msg">${escapeHtml(entry.message || "")}</span>
-    `;
-    elLogFeed.appendChild(row);
-    elLogFeed.scrollTop = elLogFeed.scrollHeight;
-  }
-
-  function rebuildLogs() {
-    elLogFeed.innerHTML = "";
-    state.logs.forEach(renderLogEntry);
-    const visibleCount = state.filterLevel === "ALL"
-      ? state.logs.length
-      : state.logs.filter((e) => normalizeLevel(e.level) === state.filterLevel).length;
-    elLogCount.textContent = `${visibleCount} entradas`;
-  }
-
-  function escapeHtml(str) {
-    return String(str)
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;");
   }
 
   // Network Actions
@@ -203,14 +147,6 @@
       if (state.isPaused) return;
       try {
         const entry = JSON.parse(evt.data);
-        state.logs.push(entry);
-        if (state.logs.length > state.maxLogs) {
-          state.logs.shift();
-        }
-        renderLogEntry(entry);
-        elLogCount.textContent = `${state.logs.length} entradas`;
-
-        // Sincroniza estado do painel em tempo real a partir dos logs
         if (entry.payload) {
           const p = entry.payload;
           let changed = false;
@@ -280,22 +216,6 @@
       postCommand("silence_alarm");
     });
 
-    // Clear Logs
-    $("#btn-clear-logs").addEventListener("click", () => {
-      state.logs = [];
-      rebuildLogs();
-    });
-
-    // Filter Buttons
-    $$(".filter-btn").forEach((btn) => {
-      btn.addEventListener("click", (e) => {
-        $$(".filter-btn").forEach((b) => b.classList.remove("active"));
-        e.target.classList.add("active");
-        state.filterLevel = e.target.dataset.filter;
-        rebuildLogs();
-      });
-    });
-
     // Scenarios
     $("#btn-run-sc1").addEventListener("click", () => runScenario("nominal", $("#res-sc1")));
     $("#btn-run-sc2").addEventListener("click", () => runScenario("failover", $("#res-sc2")));
@@ -323,47 +243,6 @@
         }
       });
     }
-
-    // Floating Tooltip for Log Payloads on Mouse Move
-    let tooltip = $("#floating-tooltip");
-    if (!tooltip) {
-      tooltip = document.createElement("div");
-      tooltip.id = "floating-tooltip";
-      tooltip.className = "floating-tooltip";
-      document.body.appendChild(tooltip);
-    }
-
-    elLogFeed.addEventListener("mousemove", (e) => {
-      const row = e.target.closest(".log-entry[data-has-payload='true']");
-      if (!row || !row.dataset.payload) {
-        tooltip.style.display = "none";
-        return;
-      }
-      try {
-        const parsed = JSON.parse(row.dataset.payload);
-        const formatted = JSON.stringify(parsed, null, 2);
-        tooltip.innerHTML = `<pre><code>${escapeHtml(formatted)}</code></pre>`;
-        tooltip.style.display = "block";
-
-        let top = e.clientY + 12;
-        let left = e.clientX + 14;
-
-        if (left + tooltip.offsetWidth > window.innerWidth - 12) {
-          left = e.clientX - tooltip.offsetWidth - 14;
-        }
-        if (top + tooltip.offsetHeight > window.innerHeight - 12) {
-          top = e.clientY - tooltip.offsetHeight - 14;
-        }
-        tooltip.style.top = `${Math.max(6, top)}px`;
-        tooltip.style.left = `${Math.max(6, left)}px`;
-      } catch (err) {
-        tooltip.style.display = "none";
-      }
-    });
-
-    elLogFeed.addEventListener("mouseleave", () => {
-      tooltip.style.display = "none";
-    });
   }
 
   // Init
@@ -382,4 +261,3 @@
     init();
   }
 })();
-
