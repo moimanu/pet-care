@@ -457,15 +457,47 @@ main.dashboard-grid {
   flex: 1;
 }
 
-.log-payload {
-  color: #94a3b8;
+.log-entry[data-has-payload="true"] {
+  cursor: pointer;
+}
+
+.log-entry[data-has-payload="true"]:hover {
+  background: var(--surface-hover);
+}
+
+.floating-tooltip {
+  display: none;
+  position: fixed;
+  z-index: 9999;
+  background: #0f141c;
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius);
+  padding: 8px 12px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.6);
+  pointer-events: none;
   font-family: var(--font-mono);
+  font-size: 11px;
+  color: #e2e8f0;
+  max-width: 420px;
+  max-height: 280px;
+  overflow: auto;
+  line-height: 1.45;
+}
+
+.floating-tooltip .tooltip-header {
   font-size: 10px;
-  background: rgba(255, 255, 255, 0.04);
-  padding: 1px 4px;
-  border-radius: 3px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  margin-left: 4px;
+  text-transform: uppercase;
+  color: var(--muted);
+  letter-spacing: 0.5px;
+  margin-bottom: 6px;
+  font-weight: 600;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 4px;
+}
+
+.floating-tooltip pre {
+  margin: 0;
+  white-space: pre-wrap;
   word-break: break-all;
 }
 

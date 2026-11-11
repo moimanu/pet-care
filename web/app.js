@@ -103,15 +103,16 @@
     const ts = formatLocalTime(entry.timestamp);
     const src = entry.component || "Sys";
 
-    const payloadHtml = entry.payload
-      ? ` <code class="log-payload">${escapeHtml(typeof entry.payload === "string" ? entry.payload : JSON.stringify(entry.payload))}</code>`
-      : "";
+    if (entry.payload) {
+      row.dataset.hasPayload = "true";
+      row.dataset.payload = typeof entry.payload === "string" ? entry.payload : JSON.stringify(entry.payload);
+    }
 
     row.innerHTML = `
       <span class="log-ts">${ts}</span>
       <span class="log-lvl ${lvl}">${lvl}</span>
       <span class="log-src">[${src}]</span>
-      <span class="log-msg">${escapeHtml(entry.message || "")}${payloadHtml}</span>
+      <span class="log-msg">${escapeHtml(entry.message || "")}</span>
     `;
     elLogFeed.appendChild(row);
     elLogFeed.scrollTop = elLogFeed.scrollHeight;
@@ -257,6 +258,50 @@
     $("#btn-run-sc3").addEventListener("click", () => runScenario("byzantine", $("#res-sc3")));
     $("#btn-run-sc4").addEventListener("click", () => runScenario("sanitization", $("#res-sc4")));
     $("#btn-run-sc5").addEventListener("click", () => runScenario("idempotency", $("#res-sc5")));
+
+    // Floating Tooltip for Log Payloads on Hover
+    let tooltip = $("#floating-tooltip");
+    if (!tooltip) {
+      tooltip = document.createElement("div");
+      tooltip.id = "floating-tooltip";
+      tooltip.className = "floating-tooltip";
+      document.body.appendChild(tooltip);
+    }
+
+    elLogFeed.addEventListener("mouseover", (e) => {
+      const row = e.target.closest(".log-entry[data-has-payload='true']");
+      if (!row || !row.dataset.payload) {
+        tooltip.style.display = "none";
+        return;
+      }
+      try {
+        const parsed = JSON.parse(row.dataset.payload);
+        const formatted = JSON.stringify(parsed, null, 2);
+        tooltip.innerHTML = `<div class="tooltip-header">Payload JSON</div><pre><code>${escapeHtml(formatted)}</code></pre>`;
+        tooltip.style.display = "block";
+
+        const rect = row.getBoundingClientRect();
+        let top = rect.top - tooltip.offsetHeight - 8;
+        if (top < 10) {
+          top = rect.bottom + 8;
+        }
+        let left = Math.max(16, rect.left + 40);
+        if (left + tooltip.offsetWidth > window.innerWidth - 16) {
+          left = window.innerWidth - tooltip.offsetWidth - 16;
+        }
+        tooltip.style.top = `${top}px`;
+        tooltip.style.left = `${left}px`;
+      } catch (err) {
+        tooltip.style.display = "none";
+      }
+    });
+
+    elLogFeed.addEventListener("mouseout", (e) => {
+      const row = e.target.closest(".log-entry");
+      if (row && (!e.relatedTarget || !row.contains(e.relatedTarget))) {
+        tooltip.style.display = "none";
+      }
+    });
   }
 
   // Init
