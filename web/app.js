@@ -30,7 +30,6 @@
     "middleware": { label: "Middleware", cls: "tag-middleware" },
     "iot": { label: "IoT Edge", cls: "tag-iot" },
     "broker": { label: "Broker MQTT", cls: "tag-broker" },
-    "web": { label: "Web Server", cls: "tag-web" },
   };
 
   // View Helpers & DOM elements

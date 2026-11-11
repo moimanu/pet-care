@@ -61,7 +61,6 @@ class LogFileTailer:
         "controller_3": "node-3",
         "middleware": "middleware",
         "iot_devices": "iot",
-        "web_server": "web",
     }
 
     def __init__(
