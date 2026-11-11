@@ -74,8 +74,16 @@
     }
 
     if (p.atualizado_em) {
-      elSyncTime.textContent = `Ultima sincronizacao: ${p.atualizado_em.slice(11, 19)}`;
+      elSyncTime.textContent = `Ultima sincronizacao: ${formatLocalTime(p.atualizado_em)}`;
     }
+  }
+
+  function formatLocalTime(isoStr) {
+    if (!isoStr) return new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
+    const d = new Date(isoStr);
+    return !isNaN(d.getTime())
+      ? d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false })
+      : isoStr.slice(11, 19);
   }
 
   function renderLogEntry(entry) {
@@ -84,7 +92,7 @@
     }
     const row = document.createElement("div");
     row.className = "log-entry";
-    const ts = entry.timestamp ? entry.timestamp.slice(11, 19) : new Date().toISOString().slice(11, 19);
+    const ts = formatLocalTime(entry.timestamp);
     const lvl = entry.level || "INFO";
     const src = entry.component || "Sys";
 

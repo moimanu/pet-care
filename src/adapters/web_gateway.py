@@ -34,7 +34,7 @@ class WebGatewayLogHandler(logging.Handler):
     def emit(self, record: logging.LogRecord) -> None:
         try:
             entry = {
-                "timestamp": datetime.fromtimestamp(record.created, tz=timezone.utc).isoformat(),
+                "timestamp": datetime.fromtimestamp(record.created).astimezone().isoformat(),
                 "level": record.levelname,
                 "component": self.component or record.name,
                 "message": record.getMessage(),
