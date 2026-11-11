@@ -66,5 +66,5 @@ echo "Logs disponíveis em ./logs/"
 echo "Pressione Ctrl+C para encerrar o sistema."
 echo "--------------------------------------------------"
 
-# Executa o cliente CLI em foreground
-$PYTHON src/entrypoints/run_client_cli.py
+# Executa o servidor Web em foreground
+$PYTHON src/entrypoints/run_web.py

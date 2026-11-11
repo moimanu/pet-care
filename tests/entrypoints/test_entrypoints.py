@@ -84,24 +84,10 @@ def test_build_middleware_and_wrapper():
     assert res["sucesso"] is True
 
 
-def test_client_cli_methods():
-    from src.entrypoints.run_client_cli import ClientCLI
-
-    mock_middleware = DummyNode(primary=True)
-    cli_middleware = PyroMiddlewareWrapper(build_middleware({1: mock_middleware, 2: mock_middleware}))
-    cli = ClientCLI(cli_middleware)
-
-    assert cli.handle_option("1") is True
-    assert cli.handle_option("4") is True
-    assert cli.handle_option("5") is True
-    assert cli.handle_option("0") is False
-
-
 def test_full_real_pyro_pipeline(tmp_path):
     import threading
     import time
     import Pyro5.api
-    from src.entrypoints.run_client_cli import ClientCLI
     from src.adapters.pyro_gateway import PyroControllerNodeWrapper, PyroControllerNodeProxy
 
     c1 = build_controller(1, is_primary=True, db_path=str(tmp_path / "n1.db"), broker_client=DummyBroker())
@@ -133,10 +119,9 @@ def test_full_real_pyro_pipeline(tmp_path):
     time.sleep(0.1)
 
     client_proxy = Pyro5.api.Proxy("PYRO:mid@localhost:19880")
-    cli = ClientCLI(client_proxy)
-
-    assert cli.handle_option("1") is True
-    cli.dispense_food("50")
-    assert cli.handle_option("1") is True
+    status = client_proxy.get_pet_status()
+    assert status["sucesso"] is True
+    res = client_proxy.dispensar_racao(50.0)
+    assert res["sucesso"] is True
 
 

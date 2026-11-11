@@ -8,7 +8,7 @@ Trabalho Prático de Sistemas Distribuídos implementando controle autônomo, pe
 
 ```mermaid
 flowchart TD
-    CLI["Cliente CLI\n(src/entrypoints/run_client_cli.py)"]
+    CLI["Painel Web / Gateway\n(src/entrypoints/run_web.py)"]
     MID["Middleware Pyro5\n(src/entrypoints/run_middleware.py)\n• Quórum Bizantino (2f+1)\n• Failover Transparente\n• Idempotência UUID"]
     
     C1["Controlador 1 (Primário)\n(node_1.db - Porta 9091)"]
@@ -167,7 +167,7 @@ docker compose up -d
 
 #### Terminal 6: Iniciar o Cliente CLI do Tutor
 ```bash
-.venv/bin/python src/entrypoints/run_client_cli.py
+.venv/bin/python src/entrypoints/run_web.py
 ```
 
 **Interface Interativa:**
