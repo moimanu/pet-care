@@ -220,138 +220,85 @@
           </div>
         </div>
 
-        <!-- Card: Guia de Execucao dos Cenarios -->
-        <div class="card">
+        <!-- Card: Guia de Testes dos Cenarios (Markdown-like) -->
+        <article class="card markdown-doc">
           <div class="card-title">
             <span>Guia de Testes dos Cenarios Distribuidos</span>
             <i data-lucide="file-text" aria-hidden="true"></i>
           </div>
-          <p style="font-size: 11px; color: var(--muted); margin-bottom: 8px;">
-            Utilize os recursos de interface acima para simular falhas de infraestrutura ou envie requisicoes aos endpoints padrao (via Swagger ao lado ou curl):
+          <p>
+            Utilize os controles de nós acima ou envie requisições HTTP (via Swagger ou curl) para validar cada cenário distribuído:
           </p>
 
-          <!-- Cenario 1: Falha Bizantina -->
-          <div class="scenario-doc-card">
-            <div class="scenario-doc-header">
-              <span class="scenario-doc-title">
-                <i data-lucide="shield-alert" aria-hidden="true"></i>
-                <span>1. Tolerancia a Falhas Bizantinas (2f + 1)</span>
-              </span>
-              <span class="badge badge-warning">Infraestrutura</span>
-            </div>
-            <div class="scenario-doc-desc">
-              Simula um controlador fornecendo respostas falsificadas (ataque ou erro intermitente).
-            </div>
-            <div class="scenario-doc-row">
-              <span class="scenario-doc-label">Acao na Interface:</span>
-              <span class="scenario-doc-desc">No card do <strong>Controlador 3</strong> acima, clique em <code>Corromper</code>.</span>
-            </div>
-            <div class="scenario-doc-row">
-              <span class="scenario-doc-label">Endpoint Padrao:</span>
-              <code class="scenario-code-block">GET /api/status</code>
-            </div>
-            <div class="scenario-doc-row">
-              <span class="scenario-doc-label">Log Python no Terminal:</span>
-              <div class="scenario-log-expected">[ERROR] (Middleware) [SEGURANCA] Falha Bizantina detectada no No 3. Resposta descartada.</div>
-            </div>
-          </div>
+          <section>
+            <h4>1. Tolerância a Falhas Bizantinas (2f + 1)</h4>
+            <p>Simula um controlador fornecendo respostas falsificadas (ataque ou erro intermitente).</p>
+            <ul>
+              <li><strong>Ação na Interface:</strong> no nó <strong>Controlador 3</strong> acima, clique em <code>Corromper</code>.</li>
+              <li><strong>Endpoint:</strong> <code>GET /api/status</code></li>
+              <li><strong>Log no Terminal:</strong>
+                <pre><code>[ERROR] (Middleware) [SEGURANCA] Falha Bizantina detectada no No 3. Resposta descartada.</code></pre>
+              </li>
+            </ul>
+          </section>
 
-          <!-- Cenario 2: Failover Crash-Stop -->
-          <div class="scenario-doc-card">
-            <div class="scenario-doc-header">
-              <span class="scenario-doc-title">
-                <i data-lucide="refresh-cw" aria-hidden="true"></i>
-                <span>2. Failover Crash-Stop (Queda do Primario)</span>
-              </span>
-              <span class="badge badge-danger">Infraestrutura</span>
-            </div>
-            <div class="scenario-doc-desc">
-              Simula queda abrupta do no primario durante o processamento de comando do cliente.
-            </div>
-            <div class="scenario-doc-row">
-              <span class="scenario-doc-label">Acao na Interface:</span>
-              <span class="scenario-doc-desc">No card do <strong>Controlador 1 (Lider)</strong> acima, clique em <code>Derrubar</code>.</span>
-            </div>
-            <div class="scenario-doc-row">
-              <div style="display: flex; align-items: center; justify-content: space-between;">
-                <span class="scenario-doc-label">Endpoint Padrao & Payload:</span>
-                <button class="btn btn-xs btn-copy-preset" data-preset="failover" aria-label="Copiar JSON de failover" title="Copiar JSON">
-                  <i data-lucide="copy" aria-hidden="true"></i>
-                  <span>Copiar</span>
-                </button>
-              </div>
-              <pre class="scenario-code-block" id="code-preset-failover">POST /api/command/dispense_food
-{"quantidade": 50.0}</pre>
-            </div>
-            <div class="scenario-doc-row">
-              <span class="scenario-doc-label">Logs Python no Terminal:</span>
-              <div class="scenario-log-expected">[WARNING] (Middleware) No Primario 1 inalcancavel... Iniciando failover transparente.
-[INFO] (Middleware) No 2 promovido com sucesso a novo Lider Primario.</div>
-            </div>
-          </div>
+          <section>
+            <h4>2. Failover Crash-Stop (Queda do Primário)</h4>
+            <p>Simula queda abrupta do nó primário durante o processamento de comando do cliente.</p>
+            <ul>
+              <li><strong>Ação na Interface:</strong> no nó <strong>Controlador 1 (Líder)</strong> acima, clique em <code>Derrubar</code>.</li>
+              <li>
+                <div class="code-header">
+                  <strong>Endpoint & Payload:</strong>
+                  <button class="btn btn-xs btn-copy-preset" data-preset="failover" title="Copiar requisição">Copiar</button>
+                </div>
+                <pre id="code-preset-failover"><code>POST /api/command/dispense_food
+{"quantidade": 50.0}</code></pre>
+              </li>
+              <li><strong>Logs no Terminal:</strong>
+                <pre><code>[WARNING] (Middleware) No Primario 1 inalcancavel... Iniciando failover transparente.
+[INFO] (Middleware) No 2 promovido com sucesso a novo Lider Primario.</code></pre>
+              </li>
+            </ul>
+          </section>
 
-          <!-- Cenario 3: Idempotencia -->
-          <div class="scenario-doc-card">
-            <div class="scenario-doc-header">
-              <span class="scenario-doc-title">
-                <i data-lucide="check-circle-2" aria-hidden="true"></i>
-                <span>3. Idempotencia (Semantica Exactly-Once)</span>
-              </span>
-              <span class="badge badge-neutral">Interacao / Rede</span>
-            </div>
-            <div class="scenario-doc-desc">
-              Comprova que retransmissoes de rede com mesmo <code>command_id</code> nao duplicam atuações fisicas.
-            </div>
-            <div class="scenario-doc-row">
-              <span class="scenario-doc-label">Como Executar:</span>
-              <span class="scenario-doc-desc">Dispare duas vezes consecutivas o comando abaixo com o mesmo UUID.</span>
-            </div>
-            <div class="scenario-doc-row">
-              <div style="display: flex; align-items: center; justify-content: space-between;">
-                <span class="scenario-doc-label">Endpoint Padrao & Payload:</span>
-                <button class="btn btn-xs btn-copy-preset" data-preset="idempotency" aria-label="Copiar JSON de idempotencia" title="Copiar JSON">
-                  <i data-lucide="copy" aria-hidden="true"></i>
-                  <span>Copiar</span>
-                </button>
-              </div>
-              <pre class="scenario-code-block" id="code-preset-idempotency">POST /api/command/dispense_food
-{"quantidade": 50.0, "command_id": "00000000-0000-0000-0000-000000000001"}</pre>
-            </div>
-            <div class="scenario-doc-row">
-              <span class="scenario-doc-label">Log Python no Terminal (2a execucao):</span>
-              <div class="scenario-log-expected">[WARNING] (Controller-Node1) No 1: Comando duplicado ignorado por idempotencia (command_id=00000000-0000-0000-0000-000000000001)</div>
-            </div>
-          </div>
+          <section>
+            <h4>3. Idempotência (Semântica Exactly-Once)</h4>
+            <p>Comprova que retransmissões com o mesmo <code>command_id</code> não duplicam atuações físicas.</p>
+            <ul>
+              <li><strong>Como Executar:</strong> dispare duas vezes consecutivas a requisição abaixo com o mesmo UUID.</li>
+              <li>
+                <div class="code-header">
+                  <strong>Endpoint & Payload:</strong>
+                  <button class="btn btn-xs btn-copy-preset" data-preset="idempotency" title="Copiar requisição">Copiar</button>
+                </div>
+                <pre id="code-preset-idempotency"><code>POST /api/command/dispense_food
+{"quantidade": 50.0, "command_id": "00000000-0000-0000-0000-000000000001"}</code></pre>
+              </li>
+              <li><strong>Log no Terminal (2ª execução):</strong>
+                <pre><code>[WARNING] (Controller-Node1) No 1: Comando duplicado ignorado por idempotencia (command_id=00000000-0000-0000-0000-000000000001)</code></pre>
+              </li>
+            </ul>
+          </section>
 
-          <!-- Cenario 4: Sanitizacao de Entradas -->
-          <div class="scenario-doc-card">
-            <div class="scenario-doc-header">
-              <span class="scenario-doc-title">
-                <i data-lucide="alert-octagon" aria-hidden="true"></i>
-                <span>4. Sanitizacao de Entradas (Validacao de Dominio)</span>
-              </span>
-              <span class="badge badge-neutral">Interacao / Entrada</span>
-            </div>
-            <div class="scenario-doc-desc">
-              Verifica a rejeicao de dados anomalos pelo validador antes de atingir o banco relacional.
-            </div>
-            <div class="scenario-doc-row">
-              <div style="display: flex; align-items: center; justify-content: space-between;">
-                <span class="scenario-doc-label">Endpoint Padrao & Payload:</span>
-                <button class="btn btn-xs btn-copy-preset" data-preset="sanitization" aria-label="Copiar JSON de sanitizacao" title="Copiar JSON">
-                  <i data-lucide="copy" aria-hidden="true"></i>
-                  <span>Copiar</span>
-                </button>
-              </div>
-              <pre class="scenario-code-block" id="code-preset-sanitization">POST /api/command/dispense_food
-{"quantidade": -50.0}</pre>
-            </div>
-            <div class="scenario-doc-row">
-              <span class="scenario-doc-label">Log Python no Terminal (HTTP 400):</span>
-              <div class="scenario-log-expected">[WARNING] (WebGateway) Falha na validacao/execucao do comando dispense_food: Quantidade de racao invalida: -50.0g...</div>
-            </div>
-          </div>
-        </div>
+          <section>
+            <h4>4. Sanitização de Entradas (Validação de Domínio)</h4>
+            <p>Verifica a rejeição de dados anômalos pelo validador antes de atingir o banco relacional.</p>
+            <ul>
+              <li>
+                <div class="code-header">
+                  <strong>Endpoint & Payload:</strong>
+                  <button class="btn btn-xs btn-copy-preset" data-preset="sanitization" title="Copiar requisição">Copiar</button>
+                </div>
+                <pre id="code-preset-sanitization"><code>POST /api/command/dispense_food
+{"quantidade": -50.0}</code></pre>
+              </li>
+              <li><strong>Log no Terminal (HTTP 400):</strong>
+                <pre><code>[WARNING] (WebGateway) Falha na validacao/execucao do comando dispense_food: Quantidade de racao invalida: -50.0g...</code></pre>
+              </li>
+            </ul>
+          </section>
+        </article>
       </div>
 
       <!-- Aba 2: Swagger UI Embedded -->
