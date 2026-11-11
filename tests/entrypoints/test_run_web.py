@@ -93,3 +93,4 @@ def test_mqtt_message_handler_broadcasts(running_web_server):
         assert "racao" in msg
     finally:
         running_web_server.unsubscribe_sse(sub)
+

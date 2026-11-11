@@ -323,3 +323,4 @@ class WebGateway:
         with self._clients_lock:
             self._subscribers.clear()
         logger.info("WebGateway encerrado")
+

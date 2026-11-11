@@ -183,3 +183,4 @@ def test_not_found(gateway):
     with pytest.raises(urllib.error.HTTPError) as exc_info:
         urllib.request.urlopen(url)
     assert exc_info.value.code == 404
+
