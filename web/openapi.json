@@ -51,10 +51,75 @@
         }
       }
     },
+    "/api/nodes": {
+      "get": {
+        "summary": "Topologia e Status dos Nós Controladores",
+        "description": "Consulta o estado ao vivo das 3 réplicas conectadas ao Middleware (primário/secundário, online/offline, íntegro/bizantino).",
+        "responses": {
+          "200": {
+            "description": "Lista de nós controladores",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "sucesso": { "type": "boolean" },
+                    "nodes": {
+                      "type": "array",
+                      "items": { "$ref": "#/components/schemas/NodeInfo" }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/nodes/{node_id}/toggle_offline": {
+      "post": {
+        "summary": "Simular Crash-Stop / Recuperação do Nó",
+        "description": "Alterna o status do nó entre ONLINE e OFFLINE. Ao derrubar o Primário, o próximo comando dispara failover automático.",
+        "parameters": [
+          {
+            "name": "node_id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "integer", "enum": [1, 2, 3] },
+            "description": "Identificador do nó controlador"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Status de conectividade alterado com sucesso"
+          }
+        }
+      }
+    },
+    "/api/nodes/{node_id}/toggle_corrupt": {
+      "post": {
+        "summary": "Injetar / Remover Falha Bizantina no Nó",
+        "description": "Alterna a injeção de comportamento bizantino (respostas falsificadas). O Middleware descartará os valores por quórum 2f+1.",
+        "parameters": [
+          {
+            "name": "node_id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "integer", "enum": [1, 2, 3] },
+            "description": "Identificador do nó controlador"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Falha bizantina alterada com sucesso"
+          }
+        }
+      }
+    },
     "/api/command/dispense_food": {
       "post": {
-        "summary": "Dispensar Ração Manualmente",
-        "description": "Envia comando com idempotência UUID para o nó primário liberar ração através do dispenser na borda IoT.",
+        "summary": "Dispensar Ração (Suporta Idempotência & Sanitização)",
+        "description": "Envia comando para o nó primário liberar ração. Quantidades negativas são rejeitadas por sanitização (HTTP 400). Se command_id for fornecido repetido, garante idempotência.",
         "requestBody": {
           "required": false,
           "content": {
@@ -65,7 +130,12 @@
                   "quantidade": {
                     "type": "number",
                     "default": 50.0,
-                    "description": "Quantidade em gramas a dispensar"
+                    "description": "Quantidade em gramas a dispensar (0.1 a 500.0)"
+                  },
+                  "command_id": {
+                    "type": "string",
+                    "example": "00000000-0000-0000-0000-000000000001",
+                    "description": "UUID opcional para garantir idempotência exactly-once"
                   }
                 }
               }
@@ -74,11 +144,21 @@
         },
         "responses": {
           "200": {
-            "description": "Comando processado",
+            "description": "Comando processado com sucesso",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/CommandResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Rejeição de sanitização (quantidade inválida ou negativa)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             }
@@ -88,8 +168,8 @@
     },
     "/api/command/refill_water": {
       "post": {
-        "summary": "Repor Água Manualmente",
-        "description": "Envia comando com idempotência UUID para o nó primário acionar a válvula solenoide de reposição de água.",
+        "summary": "Repor Água (Suporta Idempotência & Sanitização)",
+        "description": "Envia comando para o nó primário acionar a reposição de água. Quantidades negativas são rejeitadas por sanitização (HTTP 400). Suporta command_id opcional.",
         "requestBody": {
           "required": false,
           "content": {
@@ -100,7 +180,12 @@
                   "quantidade": {
                     "type": "number",
                     "default": 200.0,
-                    "description": "Quantidade em mililitros a repor"
+                    "description": "Quantidade em mililitros a repor (0.1 a 1000.0)"
+                  },
+                  "command_id": {
+                    "type": "string",
+                    "example": "00000000-0000-0000-0000-000000000002",
+                    "description": "UUID opcional para garantir idempotência exactly-once"
                   }
                 }
               }
@@ -109,11 +194,21 @@
         },
         "responses": {
           "200": {
-            "description": "Comando processado",
+            "description": "Comando processado com sucesso",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/CommandResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Rejeição de sanitização (quantidade inválida ou negativa)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             }
@@ -124,7 +219,23 @@
     "/api/command/clean_litter": {
       "post": {
         "summary": "Zerar Contador da Caixa de Areia",
-        "description": "Registra a higienização física da caixa de areia, resetando o contador de usos acumulados.",
+        "description": "Registra a higienização física da caixa de areia, resetando o contador de usos acumulados. Suporta command_id opcional.",
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "command_id": {
+                    "type": "string",
+                    "description": "UUID opcional para idempotência"
+                  }
+                }
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "description": "Caixa de areia resetada",
@@ -142,7 +253,23 @@
     "/api/command/silence_alarm": {
       "post": {
         "summary": "Silenciar Alarme de Fuga",
-        "description": "Desarma a sirene física na borda IoT caso tenha sido disparada por violação do perímetro.",
+        "description": "Desarma a sirene física na borda IoT caso tenha sido disparada por violação do perímetro. Suporta command_id opcional.",
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "command_id": {
+                    "type": "string",
+                    "description": "UUID opcional para idempotência"
+                  }
+                }
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "description": "Alarme silenciado",
@@ -156,110 +283,51 @@
           }
         }
       }
-    },
-    "/api/scenarios/{scenario_name}": {
-      "post": {
-        "summary": "Executar Cenário Experimental de Auditoria",
-        "description": "Executa de forma isolada um dos cenários distribuídos em ambiente temporário de auditoria.",
-        "parameters": [
-          {
-            "name": "scenario_name",
-            "in": "path",
-            "required": true,
-            "description": "Identificador do cenário",
-            "schema": {
-              "type": "string",
-              "enum": [
-                "nominal",
-                "failover",
-                "byzantine",
-                "sanitization",
-                "idempotency"
-              ]
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Resultado detalhado da execução do cenário",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "success": {
-                      "type": "boolean"
-                    }
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
     }
   },
   "components": {
     "schemas": {
+      "NodeInfo": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "integer", "example": 1 },
+          "primary": { "type": "boolean", "example": true },
+          "corrupt": { "type": "boolean", "example": false },
+          "offline": { "type": "boolean", "example": false }
+        }
+      },
       "PetState": {
         "type": "object",
         "properties": {
-          "racao_gramas": {
-            "type": "number",
-            "example": 185.0
-          },
-          "agua_ml": {
-            "type": "number",
-            "example": 450.0
-          },
-          "areia_usos": {
-            "type": "integer",
-            "example": 1
-          },
-          "status_fuga": {
-            "type": "string",
-            "example": "DENTRO"
-          },
-          "alarme_ativo": {
-            "type": "boolean",
-            "example": false
-          },
-          "hash": {
-            "type": "string",
-            "example": "a4b5c6..."
-          },
-          "atualizado_em": {
-            "type": "string",
-            "example": "2026-11-11T13:20:00Z"
-          }
+          "racao_gramas": { "type": "number", "example": 185.0 },
+          "agua_ml": { "type": "number", "example": 450.0 },
+          "areia_usos": { "type": "integer", "example": 1 },
+          "status_fuga": { "type": "string", "example": "DENTRO" },
+          "alarme_ativo": { "type": "boolean", "example": false },
+          "hash": { "type": "string", "example": "a4b5c6..." },
+          "atualizado_em": { "type": "string", "example": "2026-11-11T13:20:00Z" }
         }
       },
       "StatusResponse": {
         "type": "object",
         "properties": {
-          "sucesso": {
-            "type": "boolean",
-            "example": true
-          },
-          "estado": {
-            "$ref": "#/components/schemas/PetState"
-          }
+          "sucesso": { "type": "boolean", "example": true },
+          "estado": { "$ref": "#/components/schemas/PetState" }
         }
       },
       "CommandResponse": {
         "type": "object",
         "properties": {
-          "sucesso": {
-            "type": "boolean",
-            "example": true
-          },
-          "mensagem": {
-            "type": "string",
-            "example": "Comando executado com sucesso"
-          },
-          "estado": {
-            "$ref": "#/components/schemas/PetState"
-          }
+          "sucesso": { "type": "boolean", "example": true },
+          "mensagem": { "type": "string", "example": "Comando executado com sucesso" },
+          "estado": { "$ref": "#/components/schemas/PetState" }
+        }
+      },
+      "ErrorResponse": {
+        "type": "object",
+        "properties": {
+          "sucesso": { "type": "boolean", "example": false },
+          "mensagem": { "type": "string", "example": "Quantidade de racao invalida: -50.0g" }
         }
       }
     }

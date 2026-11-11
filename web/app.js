@@ -11,6 +11,7 @@
     isPaused: false,
     autoScroll: true,
     activeTab: "all",
+    nodes: [],
     pet: {
       racao_gramas: 0.0,
       agua_ml: 0.0,
@@ -39,6 +40,7 @@
   const elFeedback = $("#action-feedback");
 
   function showFeedback(message, isError = false) {
+    if (!elFeedback) return;
     elFeedback.textContent = message;
     elFeedback.className = `feedback-box show ${isError ? "feedback-error" : "feedback-success"}`;
     setTimeout(() => {
@@ -48,8 +50,8 @@
 
   function renderConnection(status, label) {
     state.connected = status;
-    elConnDot.className = `conn-dot ${status ? "online" : "offline"}`;
-    elConnText.textContent = label;
+    if (elConnDot) elConnDot.className = `conn-dot ${status ? "online" : "offline"}`;
+    if (elConnText) elConnText.textContent = label;
   }
 
   function formatLocalTime(isoStr) {
@@ -119,36 +121,102 @@
 
   function renderPetState() {
     const p = state.pet;
-    $("#val-food").textContent = Number(p.racao_gramas || 0).toFixed(1);
-    $("#val-water").textContent = Number(p.agua_ml || 0).toFixed(1);
-    $("#val-litter").textContent = String(p.areia_usos ?? 0);
+    const elFood = $("#val-food");
+    const elWater = $("#val-water");
+    const elLitter = $("#val-litter");
+
+    if (elFood) elFood.textContent = Number(p.racao_gramas || 0).toFixed(1);
+    if (elWater) elWater.textContent = Number(p.agua_ml || 0).toFixed(1);
+    if (elLitter) elLitter.textContent = String(p.areia_usos ?? 0);
 
     const elPerimeter = $("#val-perimeter");
-    const perimeter = String(p.status_fuga || "--").toUpperCase();
-    elPerimeter.textContent = perimeter;
-    elPerimeter.className = `badge ${perimeter === "DENTRO" ? "badge-success" : perimeter === "FORA" ? "badge-danger" : "badge-neutral"}`;
-
-    const elAlarm = $("#val-alarm");
-    const isAlarm = Boolean(p.alarme_ativo);
-    elAlarm.textContent = isAlarm ? "DISPARADO" : "DESARMADO";
-    elAlarm.className = `badge ${isAlarm ? "badge-danger" : "badge-neutral"}`;
-
-    if (p.hash) {
-      const shortHash = p.hash.slice(0, 14);
-      const h1 = $("#hash-node-1");
-      const h2 = $("#hash-node-2");
-      const h3 = $("#hash-node-3");
-      if (h1) h1.textContent = `hash: ${shortHash}...`;
-      if (h2) h2.textContent = `hash: ${shortHash}...`;
-      if (h3) h3.textContent = `hash: ${shortHash}...`;
+    if (elPerimeter) {
+      const perimeter = String(p.status_fuga || "--").toUpperCase();
+      elPerimeter.textContent = perimeter;
+      elPerimeter.className = `badge ${perimeter === "DENTRO" ? "badge-success" : perimeter === "FORA" ? "badge-danger" : "badge-neutral"}`;
     }
 
-    if (p.atualizado_em) {
+    const elAlarm = $("#val-alarm");
+    if (elAlarm) {
+      const isAlarm = Boolean(p.alarme_ativo);
+      elAlarm.textContent = isAlarm ? "DISPARADO" : "DESARMADO";
+      elAlarm.className = `badge ${isAlarm ? "badge-danger" : "badge-neutral"}`;
+    }
+
+    if (p.atualizado_em && elSyncTime) {
       elSyncTime.textContent = `Ultima sincronizacao: ${formatLocalTime(p.atualizado_em)}`;
     }
   }
 
+  // Render Nodes in Column 3
+  function renderNodes() {
+    const container = $("#nodes-container");
+    if (!container) return;
+
+    if (!state.nodes || state.nodes.length === 0) {
+      container.innerHTML = `<div style="font-size: 11px; color: var(--muted); padding: 4px 0;">Nenhum nó detectado no Middleware.</div>`;
+      return;
+    }
+
+    container.innerHTML = state.nodes.map((node) => {
+      const isOffline = Boolean(node.offline);
+      const isPrimary = Boolean(node.primary);
+      const isCorrupt = Boolean(node.corrupt);
+
+      return `
+        <div class="node-item ${isOffline ? "is-offline" : ""}" data-node-id="${node.id}">
+          <div class="node-meta">
+            <div class="node-title-row">
+              <i data-lucide="server" aria-hidden="true"></i>
+              <span>Controlador ${node.id}</span>
+            </div>
+            <div class="node-badges-row">
+              <span class="badge ${isOffline ? "badge-danger" : "badge-success"}">${isOffline ? "OFFLINE" : "ONLINE"}</span>
+              <span class="badge ${isPrimary ? "badge-accent" : "badge-neutral"}">${isPrimary ? "LÍDER" : "RÉPLICA"}</span>
+              <span class="badge ${isCorrupt ? "badge-warning" : "badge-neutral"}">${isCorrupt ? "BIZANTINO" : "ÍNTEGRO"}</span>
+            </div>
+          </div>
+          <div class="node-actions">
+            <button class="btn btn-xs ${isOffline ? "btn-primary" : "btn-danger"} btn-node-offline"
+              data-node-id="${node.id}"
+              aria-label="${isOffline ? "Ligar nó " + node.id : "Derrubar nó " + node.id}"
+              title="${isOffline ? "Restaurar nó (recuperação)" : "Derrubar nó (simular crash-stop)"}">
+              <i data-lucide="power" aria-hidden="true"></i>
+              <span>${isOffline ? "Ligar" : "Derrubar"}</span>
+            </button>
+            <button class="btn btn-xs ${isCorrupt ? "btn-warn" : ""} btn-node-corrupt"
+              data-node-id="${node.id}"
+              aria-label="Alternar falha bizantina no nó ${node.id}"
+              title="Injetar ou remover divergência bizantina">
+              <i data-lucide="shield-alert" aria-hidden="true"></i>
+              <span>${isCorrupt ? "Curar" : "Corromper"}</span>
+            </button>
+          </div>
+        </div>
+      `;
+    }).join("");
+
+    if (window.lucide) {
+      window.lucide.createIcons();
+    }
+  }
+
   // Network Actions
+  async function fetchNodes() {
+    try {
+      const res = await fetch("/api/nodes");
+      if (res.ok) {
+        const data = await res.json();
+        if (data.sucesso && Array.isArray(data.nodes)) {
+          state.nodes = data.nodes;
+          renderNodes();
+        }
+      }
+    } catch (err) {
+      console.warn("Falha ao obter topologia de nós", err);
+    }
+  }
+
   async function postCommand(endpoint, payload = {}) {
     try {
       const res = await fetch(`/api/command/${endpoint}`, {
@@ -166,10 +234,33 @@
           renderPetState();
         }
       }
+      fetchNodes(); // update roles after potential failover
       return data;
     } catch (err) {
       showFeedback(`Falha de comunicacao: ${err.message}`, true);
       throw err;
+    }
+  }
+
+  async function toggleNodeOffline(nodeId) {
+    try {
+      const res = await fetch(`/api/nodes/${nodeId}/toggle_offline`, { method: "POST" });
+      if (res.ok) {
+        await fetchNodes();
+      }
+    } catch (err) {
+      console.error("Erro alternando status offline do nó:", err);
+    }
+  }
+
+  async function toggleNodeCorrupt(nodeId) {
+    try {
+      const res = await fetch(`/api/nodes/${nodeId}/toggle_corrupt`, { method: "POST" });
+      if (res.ok) {
+        await fetchNodes();
+      }
+    } catch (err) {
+      console.error("Erro alternando falha bizantina do nó:", err);
     }
   }
 
@@ -225,7 +316,7 @@
             state.pet.areia_usos = Number(p.usos_acumulados);
             changed = true;
           }
-          if (p.perimetro !== undefined && p.perimetro !== null) {
+          if (p.perimetro) {
             state.pet.status_fuga = String(p.perimetro);
             changed = true;
           }
@@ -258,31 +349,43 @@
   // Event Listeners & Binding
   function bindEvents() {
     // Dispense Food
-    $("#btn-dispense").addEventListener("click", () => {
-      const val = parseFloat($("#input-food-qty").value) || 50.0;
-      postCommand("dispense_food", { quantidade: val });
-    });
+    const btnDispense = $("#btn-dispense");
+    if (btnDispense) {
+      btnDispense.addEventListener("click", () => {
+        const val = parseFloat($("#input-food-qty").value) || 50.0;
+        postCommand("dispense_food", { quantidade: val });
+      });
+    }
 
     // Refill Water
-    $("#btn-water").addEventListener("click", () => {
-      const val = parseFloat($("#input-water-qty").value) || 200.0;
-      postCommand("refill_water", { quantidade: val });
-    });
+    const btnWater = $("#btn-water");
+    if (btnWater) {
+      btnWater.addEventListener("click", () => {
+        const val = parseFloat($("#input-water-qty").value) || 200.0;
+        postCommand("refill_water", { quantidade: val });
+      });
+    }
 
     // Reset Litter
-    $("#btn-clean-litter").addEventListener("click", () => {
-      postCommand("clean_litter");
-    });
+    const btnLitter = $("#btn-clean-litter");
+    if (btnLitter) {
+      btnLitter.addEventListener("click", () => {
+        postCommand("clean_litter");
+      });
+    }
 
     // Silence Alarm
-    $("#btn-silence").addEventListener("click", () => {
-      postCommand("silence_alarm");
-    });
+    const btnSilence = $("#btn-silence");
+    if (btnSilence) {
+      btnSilence.addEventListener("click", () => {
+        postCommand("silence_alarm");
+      });
+    }
 
-    // Terminal Tabs
-    document.querySelectorAll(".term-tab").forEach((tabBtn) => {
+    // Terminal Process Filter Tabs
+    document.querySelectorAll(".terminal-tabs .term-tab[data-tab]").forEach((tabBtn) => {
       tabBtn.addEventListener("click", () => {
-        document.querySelectorAll(".term-tab").forEach((b) => {
+        document.querySelectorAll(".terminal-tabs .term-tab[data-tab]").forEach((b) => {
           b.classList.remove("active");
           b.setAttribute("aria-selected", "false");
         });
@@ -354,12 +457,85 @@
         }
       });
     }
+
+    // Column 3 Tabs (Simulacao vs Swagger)
+    const tabCol3Sim = $("#tab-col3-sim");
+    const tabCol3Swagger = $("#tab-col3-swagger");
+    const panelCol3Sim = $("#panel-col3-sim");
+    const panelCol3Swagger = $("#panel-col3-swagger");
+
+    if (tabCol3Sim && tabCol3Swagger) {
+      tabCol3Sim.addEventListener("click", () => {
+        tabCol3Sim.classList.add("active");
+        tabCol3Sim.setAttribute("aria-selected", "true");
+        tabCol3Swagger.classList.remove("active");
+        tabCol3Swagger.setAttribute("aria-selected", "false");
+        if (panelCol3Sim) panelCol3Sim.style.display = "flex";
+        if (panelCol3Swagger) panelCol3Swagger.style.display = "none";
+      });
+
+      tabCol3Swagger.addEventListener("click", () => {
+        tabCol3Swagger.classList.add("active");
+        tabCol3Swagger.setAttribute("aria-selected", "true");
+        tabCol3Sim.classList.remove("active");
+        tabCol3Sim.setAttribute("aria-selected", "false");
+        if (panelCol3Sim) panelCol3Sim.style.display = "none";
+        if (panelCol3Swagger) panelCol3Swagger.style.display = "block";
+      });
+    }
+
+    // Node Delegation (Offline & Corrupt toggles)
+    const nodesContainer = $("#nodes-container");
+    if (nodesContainer) {
+      nodesContainer.addEventListener("click", (evt) => {
+        const btnOffline = evt.target.closest(".btn-node-offline");
+        if (btnOffline) {
+          const nid = btnOffline.getAttribute("data-node-id");
+          if (nid) toggleNodeOffline(nid);
+          return;
+        }
+
+        const btnCorrupt = evt.target.closest(".btn-node-corrupt");
+        if (btnCorrupt) {
+          const nid = btnCorrupt.getAttribute("data-node-id");
+          if (nid) toggleNodeCorrupt(nid);
+          return;
+        }
+      });
+    }
+
+    // Copy Preset JSON buttons
+    document.querySelectorAll(".btn-copy-preset").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const presetKey = btn.getAttribute("data-preset");
+        const codeEl = $(`#code-preset-${presetKey}`);
+        if (codeEl) {
+          const rawText = codeEl.textContent.trim();
+          const jsonMatch = rawText.match(/\{[\s\S]*\}/);
+          const textToCopy = jsonMatch ? jsonMatch[0] : rawText;
+          navigator.clipboard.writeText(textToCopy).then(() => {
+            const span = btn.querySelector("span");
+            const originalText = span ? span.textContent : "";
+            if (span) span.textContent = "Copiado!";
+            setTimeout(() => {
+              if (span) span.textContent = originalText;
+            }, 1800);
+          }).catch((err) => {
+            console.error("Falha ao copiar", err);
+          });
+        }
+      });
+    });
   }
 
   // Initialization
   async function init() {
     bindEvents();
     setupEventSource();
+    fetchNodes();
+
+    // Poll nodes periodically to keep status fresh
+    setInterval(fetchNodes, 3000);
 
     try {
       const res = await fetch("/api/status");
