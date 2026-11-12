@@ -456,31 +456,29 @@
       });
     }
 
-    // Column 3 Tabs (Simulacao vs Swagger)
-    const tabCol3Sim = $("#tab-col3-sim");
-    const tabCol3Swagger = $("#tab-col3-swagger");
-    const panelCol3Sim = $("#panel-col3-sim");
-    const panelCol3Swagger = $("#panel-col3-swagger");
+    // Column 3 Tabs (Guia de Testes, Controladores, Swagger API)
+    const col3Tabs = document.querySelectorAll(".term-tab[data-col3-tab]");
+    const col3Panes = {
+      guide: $("#panel-col3-guide"),
+      nodes: $("#panel-col3-nodes"),
+      swagger: $("#panel-col3-swagger"),
+    };
 
-    if (tabCol3Sim && tabCol3Swagger) {
-      tabCol3Sim.addEventListener("click", () => {
-        tabCol3Sim.classList.add("active");
-        tabCol3Sim.setAttribute("aria-selected", "true");
-        tabCol3Swagger.classList.remove("active");
-        tabCol3Swagger.setAttribute("aria-selected", "false");
-        if (panelCol3Sim) panelCol3Sim.style.display = "flex";
-        if (panelCol3Swagger) panelCol3Swagger.style.display = "none";
+    col3Tabs.forEach((tabBtn) => {
+      tabBtn.addEventListener("click", () => {
+        const targetKey = tabBtn.getAttribute("data-col3-tab");
+        col3Tabs.forEach((b) => {
+          const isActive = b === tabBtn;
+          b.classList.toggle("active", isActive);
+          b.setAttribute("aria-selected", isActive ? "true" : "false");
+        });
+        Object.entries(col3Panes).forEach(([key, pane]) => {
+          if (pane) {
+            pane.style.display = key === targetKey ? "flex" : "none";
+          }
+        });
       });
-
-      tabCol3Swagger.addEventListener("click", () => {
-        tabCol3Swagger.classList.add("active");
-        tabCol3Swagger.setAttribute("aria-selected", "true");
-        tabCol3Sim.classList.remove("active");
-        tabCol3Sim.setAttribute("aria-selected", "false");
-        if (panelCol3Sim) panelCol3Sim.style.display = "none";
-        if (panelCol3Swagger) panelCol3Swagger.style.display = "block";
-      });
-    }
+    });
 
     // Node Delegation (Offline & Corrupt toggles)
     const nodesContainer = $("#nodes-container");
@@ -512,11 +510,11 @@
           const jsonMatch = rawText.match(/\{[\s\S]*\}/);
           const textToCopy = jsonMatch ? jsonMatch[0] : rawText;
           navigator.clipboard.writeText(textToCopy).then(() => {
-            const span = btn.querySelector("span");
-            const originalText = span ? span.textContent : "";
-            if (span) span.textContent = "Copiado!";
+            const labelEl = btn.querySelector("span") || btn;
+            const originalText = labelEl.textContent;
+            labelEl.textContent = "Copiado!";
             setTimeout(() => {
-              if (span) span.textContent = originalText;
+              labelEl.textContent = originalText;
             }, 1800);
           }).catch((err) => {
             console.error("Falha ao copiar", err);

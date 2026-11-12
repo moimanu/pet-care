@@ -475,7 +475,7 @@ main.dashboard-grid {
 .terminal-tabs {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 10px;
   overflow-x: auto;
   padding-bottom: 2px;
   justify-content: space-between;
@@ -694,6 +694,36 @@ main.dashboard-grid {
   color: var(--danger);
 }
 
+/* Column 3 Layout & Direct Tab Panes */
+#module-swagger .panel-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  height: calc(100% - 48px);
+  padding: 14px;
+  gap: 0;
+  overflow: hidden;
+}
+
+#module-swagger .terminal-tabs .term-tab {
+  flex: 1;
+  text-align: center;
+}
+
+.col3-tab-pane {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.tab-desc {
+  font-size: 11px;
+  color: var(--muted);
+  margin-bottom: 10px;
+}
+
 /* Swagger Panel Embedded View */
 .swagger-panel-content {
   padding: 0 !important;
@@ -706,7 +736,7 @@ main.dashboard-grid {
   height: 100%;
   border: none;
   display: block;
-  background: var(--bg);
+  background: transparent;
 }
 
 .badge-accent {
