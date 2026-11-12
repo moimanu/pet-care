@@ -26,6 +26,7 @@ class MiddlewareService:
         self.nodes = dict(nodes)
         self.timeout = timeout
         self.quorum_threshold = quorum_threshold
+        self._current_primary_id: Optional[int] = None
 
     def get_consensus_state(self) -> PetState:
         """Queries all nodes in parallel and resolves state via Byzantine majority."""
@@ -62,9 +63,28 @@ class MiddlewareService:
 
     def get_primary_node(self) -> tuple[int, ControllerNode]:
         """Finds active primary node or falls back to first responsive node."""
+        if self._current_primary_id is not None and self._current_primary_id in self.nodes:
+            active_node = self.nodes[self._current_primary_id]
+            try:
+                is_off = getattr(active_node, "is_offline", lambda: False)()
+                if active_node.is_primary() and not is_off:
+                    return self._current_primary_id, active_node
+            except Exception:
+                pass
+
+        for node_id, node in self.nodes.items():
+            try:
+                is_off = getattr(node, "is_offline", lambda: False)()
+                if node.is_primary() and not is_off:
+                    self._current_primary_id = node_id
+                    return node_id, node
+            except Exception:
+                continue
+
         for node_id, node in self.nodes.items():
             try:
                 if node.is_primary():
+                    self._current_primary_id = node_id
                     return node_id, node
             except Exception:
                 continue
@@ -104,7 +124,15 @@ class MiddlewareService:
                     candidate_node.set_primary(True)
                     result = candidate_node.execute_command(command)
                     executed_primary_id = candidate_id
+                    self._current_primary_id = candidate_id
                     logger.info("Nó %s promovido com sucesso a novo Líder Primário.", candidate_id)
+                    # Demote remaining nodes to preserve single leader invariant
+                    for other_id, other_node in self.nodes.items():
+                        if other_id != candidate_id:
+                            try:
+                                other_node.set_primary(False)
+                            except Exception:
+                                pass
                     break
                 except Exception as cand_exc:
                     logger.warning("Falha ao promover nó candidato %s: %s", candidate_id, cand_exc)
@@ -180,4 +208,38 @@ class MiddlewareService:
             return False
         node.set_offline(offline)
         logger.warning("Middleware alterou status offline no Nó %d para %s", node_id, offline)
+
+        if not offline:
+            # Enforce single leader invariant upon node recovery (non-preemptive leadership):
+            # If another healthy leader is already active, the recovered node must join as a secondary replica.
+            active_leader_id = self._find_active_primary_id(exclude=node_id)
+            if active_leader_id is not None:
+                try:
+                    node.set_primary(False)
+                    logger.info(
+                        "Nó %d recuperado como Réplica secundária (Líder ativo atual: Nó %d)",
+                        node_id,
+                        active_leader_id,
+                    )
+                except Exception as exc:
+                    logger.warning("Falha ao assegurar nó %d como réplica: %s", node_id, exc)
+            elif node.is_primary():
+                self._current_primary_id = node_id
+        else:
+            if self._current_primary_id == node_id:
+                self._current_primary_id = None
+
         return True
+
+    def _find_active_primary_id(self, exclude: Optional[int] = None) -> Optional[int]:
+        """Finds any active responsive node that is currently primary, excluding specified node."""
+        for nid, n in self.nodes.items():
+            if exclude is not None and nid == exclude:
+                continue
+            try:
+                is_off = getattr(n, "is_offline", lambda: False)()
+                if n.is_primary() and not is_off:
+                    return nid
+            except Exception:
+                continue
+        return None

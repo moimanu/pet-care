@@ -200,6 +200,24 @@ def test_controller_sync_boot_state_from_peers_when_local_empty():
     assert repo.get_state() == peer_state
 
 
+def test_controller_yields_leadership_on_boot_if_peer_already_primary():
+    repo = MockRepository(initial_state=PetState())
+    broker = MockBroker()
+    service = ControllerService(node_id=1, repository=repo, broker=broker, is_primary=True)
+
+    class PrimaryPeerMock:
+        def get_state(self) -> PetState:
+            return PetState()
+
+        def is_primary(self) -> bool:
+            return True
+
+    peer = PrimaryPeerMock()
+    service.sync_boot_state([peer])
+    # Must yield leadership because an active primary already exists
+    assert service.is_primary() is False
+
+
 def test_controller_service_implements_controller_node():
     from src.domain.interfaces import ControllerNode
     repo = MockRepository()

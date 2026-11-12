@@ -165,7 +165,20 @@ class ControllerService:
         )
 
     def sync_boot_state(self, peers: Iterable[Any]) -> None:
-        """Clones canonical state from online peers if local repository is uninitialized."""
+        """Clones canonical state from online peers and yields leadership if a primary already exists."""
+        for peer in peers:
+            try:
+                if peer.is_primary():
+                    if self._is_primary:
+                        logger.info(
+                            "Peer ativo já é primário. Nó %s inicializando como réplica secundária.",
+                            self.node_id,
+                        )
+                        self._is_primary = False
+                    break
+            except Exception:
+                pass
+
         if self.repository.get_state() is not None:
             return
 

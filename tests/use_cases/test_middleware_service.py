@@ -34,6 +34,21 @@ class MockControllerNode:
     def set_primary(self, primary: bool) -> None:
         self._primary = primary
 
+    def is_offline(self) -> bool:
+        return self.fail
+
+    def set_offline(self, offline: bool) -> None:
+        self.fail = offline
+
+    def is_corrupted(self) -> bool:
+        return False
+
+    def set_corrupt(self, corrupt: bool) -> None:
+        pass
+
+    def get_info(self) -> dict:
+        return {"id": self.node_id, "primary": self._primary, "corrupt": False, "offline": self.fail}
+
 
 def test_middleware_byzantine_quorum_resolves_majority():
     canonical_state = PetState(
@@ -141,5 +156,38 @@ def test_middleware_failover_transparently_promotes_secondary_on_primary_crash()
     assert len(node2.commands_received) == 1
     assert len(node3.commands_received) == 1
     assert node2.commands_received[0].command_id == node3.commands_received[0].command_id
+
+
+def test_recovered_node_does_not_preempt_active_leader_single_leader_invariant():
+    canonical_state = PetState(
+        racao_gramas=200.0,
+        agua_ml=500.0,
+        areia_usos=2,
+        status_fuga="DENTRO",
+        alarme_ativo=False,
+        atualizado_em="2026-11-10T15:00:00Z",
+    )
+    node1 = MockControllerNode(1, canonical_state, is_primary=True, fail=True)
+    node2 = MockControllerNode(2, canonical_state, is_primary=False, fail=False)
+    node3 = MockControllerNode(3, canonical_state, is_primary=False, fail=False)
+
+    middleware = MiddlewareService({1: node1, 2: node2, 3: node3})
+
+    # Trigger failover - Node 2 is promoted to primary
+    middleware.repor_agua(200.0)
+    assert node2.is_primary() is True
+
+    # Node 1 returns online (recovery)
+    middleware.set_node_offline(1, False)
+
+    # Invariant: Node 1 must NOT preempt Node 2. Node 1 becomes replica, Node 2 remains primary
+    assert node2.is_primary() is True
+    assert node1.is_primary() is False
+
+    # Next command is still handled by active leader (Node 2)
+    prim_id, prim_node = middleware.get_primary_node()
+    assert prim_id == 2
+    assert prim_node is node2
+
 
 
