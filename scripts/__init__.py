@@ -1,1 +1,0 @@
-"""Automated audit scripts package."""

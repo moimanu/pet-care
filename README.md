@@ -175,31 +175,16 @@ docker compose up -d
 Acesse no navegador: **http://localhost:8080/**
 
 **Módulos do Painel Web (Single-Page Application):**
-* **Módulo 1 (Painel do Tutor):** Indicadores de telemetria consolidada em tempo real (ração, água, areia, perímetro de fuga e status da sirene) e ações de controle imediato (dispensar ração, repor água, zerar caixa de areia e silenciar alarme).
-* **Módulo 2 (Observabilidade & Logs):** Streaming contínuo via Server-Sent Events (SSE) com filtros de severidade (`TODOS`, `INFO`, `WARN`, `ERROR`), contadores e inspetor visual de quórum bizantino ($2f+1$) com conferência de hashes dos 3 nós.
-* **Módulo 3 (Bancada de Testes & Simulação):** Disparador interativo dos cenários distribuídos (Replicação Nominal, Failover Crash-Stop, Falha Bizantina, Sanitização de Borda e Idempotência de Comandos).
+* **Módulo 1 (App Tutor Mobile):** Indicadores de telemetria consolidada em tempo real (ração, água, areia, perímetro de fuga e status da sirene) e ações de controle imediato (dispensar ração, repor água, zerar caixa de areia e silenciar alarme).
+* **Módulo 2 (Logs & Observabilidade):** Terminal unificado em tempo real via Server-Sent Events (SSE) com filtros por processo (`Todos`, `Controlador 1..3`, `Middleware`, `IoT Edge`, `Broker MQTT`), auto-scroll e pausa.
+* **Módulo 3 (Guia de Testes & Swagger API):** Controle interativo de injeção de falhas nos nós (`Derrubar`/`Ligar` para Crash-Stop e `Corromper`/`Curar` para Falha Bizantina), guia passo a passo dos cenários com cópia rápida de payloads e documentação interativa OpenAPI/Swagger UI embutida (`/docs`).
 
 ---
 
-## 6. Testes Automatizados e Suíte de Auditoria
+## 6. Testes Automatizados (Pytest)
 
-### 6.1. Suíte dos 4 Cenários Experimentais
-Executa a validação distribuída dos 4 cenários críticos exigidos na especificação sem precisar subir os daemons manualmente:
+Executa a suíte de testes unitários e de integração cobrindo entidades, validadores, contratos, repositório SQLite, casos de uso (incluindo quórum bizantino, failover, idempotência e sanitização), adaptadores MQTT/Pyro5/WebGateway, rotas REST/SSE e entrypoints:
 
-```bash
-.venv/bin/python scripts/run_audit_suite.py
-```
-
-**Cenários avaliados:**
-* **Cenário 1 (Replicação Nominal):** 3 nós convergem para estados idênticos sob telemetria síncrona com despacho único nos atuadores físicos.
-* **Cenário 2 (Failover Crash-Stop):** Queda forçada do Controlador 1, failover em $\le 1.0\text{ s}$ promovendo o Controlador 2 e sincronização de boot (*catch-up*) do Controlador 1 ao retornar.
-* **Cenário 3 (Falha Bizantina):** Injeção de resposta maliciosa no Controlador 3 (`--corrupt`), descarte por maioria $2 \times 1$ no Middleware e geração de alerta de segurança.
-* **Cenário 4 (Sanitização de Borda):** Rejeição de telemetria corrompida (`{"nivel_ml": -150.0}`) pelo `TelemetrySanityValidator`, preservando os dados persistidos no banco.
-
----
-
-### 6.2. Suíte de Testes Unitários e de Integração (Pytest)
 ```bash
 .venv/bin/pytest
 ```
-*Total de 66 testes cobrindo entidades, validadores, contratos, repositório SQLite, casos de uso, adaptadores MQTT/Pyro5/WebGateway, rotas REST/SSE e entrypoints.*
