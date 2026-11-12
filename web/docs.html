@@ -29,9 +29,16 @@
       box-sizing: border-box;
     }
 
+    *::-webkit-scrollbar {
+      display: none;
+      width: 0;
+      height: 0;
+      background: transparent;
+    }
+
     body {
       margin: 0;
-      padding: 4px 0;
+      padding: 0;
       background: var(--surface);
       color: var(--text);
       font-family: var(--font);
@@ -73,7 +80,12 @@
 
     /* API Info Header */
     .swagger-ui .info {
-      margin: 4px 0 12px 0;
+      margin: 0px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      box-shadow: none;
+      padding: 20px;
+      margin-bottom: 12px;
     }
 
     .swagger-ui .info .title {
@@ -110,7 +122,7 @@
       border: 1px solid var(--border);
       border-radius: var(--radius);
       box-shadow: none;
-      padding: 6px 10px;
+      padding: 20px;
       margin-bottom: 12px;
     }
 
@@ -133,12 +145,18 @@
     /* Tags header (h3 default) */
     .swagger-ui .opblock-tag-section {
       margin-bottom: 6px !important;
+      border: 1px solid var(--border) !important;
+      border-radius: var(--radius) !important;
+    }
+
+    .operation-tag-content {
+      padding: 20px;
     }
 
     .swagger-ui .opblock-tag,
     .swagger-ui h3.opblock-tag {
-      padding: 0 0 4px 0 !important;
-      margin: 2px 0 8px 0 !important;
+      padding: 20px !important;
+      margin: 0 !important;
       font-size: 12.5px !important;
       font-weight: 700 !important;
       color: #f1f5f9 !important;
@@ -257,7 +275,6 @@
 
     .swagger-ui .model-container,
     .swagger-ui .models .model-container {
-      margin: 10px !important;
       background: var(--surface) !important;
     }
 
@@ -450,7 +467,7 @@
       background: var(--surface) !important;
       border: 1px solid var(--border) !important;
       border-radius: 4px !important;
-      padding: 8px 10px !important;
+      padding: 20px !important;
     }
 
     .swagger-ui .response-col_status {
@@ -495,7 +512,7 @@
     .swagger-ui section.models h4 {
       color: var(--text) !important;
       font-size: 11.5px !important;
-      padding: 8px 10px !important;
+      padding: 20px !important;
     }
 
     .swagger-ui section.models.is-open {
