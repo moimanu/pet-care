@@ -475,21 +475,22 @@ main.dashboard-grid {
 .terminal-tabs {
   display: flex;
   align-items: center;
-  gap: 10px;
   overflow-x: auto;
   padding-bottom: 2px;
 }
 
 .term-tab {
-  background: var(--surface-alt);
-  border: 1px solid var(--border);
+  border: none;
+  border-bottom: 1px solid var(--border);
+  background: none;
   color: var(--muted);
   font-size: 10px;
-  padding: 3px 8px;
-  border-radius: 4px;
+  padding: 10px 12px;
   cursor: pointer;
   white-space: nowrap;
   transition: all 0.15s ease;
+  border-radius: 5px 5px 0px 0px;
+  flex: 1;
 }
 
 .term-tab:hover {
