@@ -18,7 +18,6 @@
       areia_usos: 0,
       status_fuga: "--",
       alarme_ativo: false,
-      hash: "",
       atualizado_em: "",
     },
   };

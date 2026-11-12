@@ -77,16 +77,6 @@ header {
   letter-spacing: -0.2px;
 }
 
-.brand-badge {
-  font-size: 10px;
-  padding: 2px 6px;
-  border-radius: 4px;
-  background: var(--surface-alt);
-  color: var(--muted);
-  border: 1px solid var(--border);
-  text-transform: uppercase;
-}
-
 .header-meta {
   display: flex;
   align-items: center;
@@ -474,109 +464,7 @@ main.dashboard-grid {
   border-color: var(--accent);
 }
 
-/* Processes and Topology Grid */
-.processes-list {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.process-card {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 9px 11px;
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-}
-
-.process-card.divergent {
-  border-color: var(--danger);
-  background: rgba(239, 68, 68, 0.05);
-}
-
-.process-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-
-.process-name {
-  font-size: 12px;
-  font-weight: 600;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.process-desc {
-  font-size: 11px;
-  color: var(--muted);
-  line-height: 1.35;
-}
-
-.process-hash {
-  font-size: 10px;
-  color: var(--muted);
-  margin-top: 2px;
-  word-break: break-all;
-}
-
-.process-terminal {
-  margin-top: 6px;
-  padding: 6px 8px;
-  background: #06080a;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  font-size: 10px;
-  line-height: 1.45;
-  color: #cbd5e1;
-  max-height: 72px;
-  min-height: 44px;
-  overflow-y: auto;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.term-line {
-  display: flex;
-  align-items: flex-start;
-  gap: 6px;
-  word-break: break-all;
-}
-
-.term-ts {
-  color: var(--muted);
-  flex-shrink: 0;
-}
-
-.process-card.pulse {
-  border-color: #60a5fa;
-}
-
 /* Unified Terminal & Tabs */
-.btn-swagger {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  background: var(--surface-alt);
-  border: 1px solid var(--border-light);
-  color: var(--text);
-  font-size: 11px;
-  padding: 4px 8px;
-  border-radius: var(--radius);
-  text-decoration: none;
-  transition: all 0.15s ease;
-}
-
-.btn-swagger:hover {
-  background: var(--surface-hover);
-  border-color: #60a5fa;
-  color: #fff;
-}
-
 .terminal-header-bar {
   display: flex;
   flex-direction: column;
@@ -780,46 +668,6 @@ main.dashboard-grid {
   color: #fca5a5;
 }
 
-/* Endpoints Directory */
-.endpoints-list {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.endpoint-link,
-.endpoint-item {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 7px 10px;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  text-decoration: none;
-  color: var(--text);
-  font-size: 12px;
-}
-
-.endpoint-link {
-  transition: background 0.15s, border-color 0.15s;
-}
-
-.endpoint-link:hover {
-  background: var(--surface-hover);
-  border-color: var(--border-light);
-}
-
-.endpoint-path {
-  font-size: 12px;
-  color: var(--text);
-  flex: 1;
-}
-
-.endpoint-link i {
-  color: var(--muted);
-}
-
 /* Feedback alert / toast */
 .feedback-box {
   padding: 8px 10px;
@@ -924,13 +772,6 @@ main.dashboard-grid {
   line-height: 1.5;
 }
 
-.markdown-doc h3 {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--fg);
-  margin-bottom: 6px;
-}
-
 .markdown-doc > p {
   font-size: 11px;
   color: var(--muted);
@@ -966,7 +807,7 @@ main.dashboard-grid {
 }
 
 .markdown-doc li {
-  color: var(--fg);
+  color: var(--text);
 }
 
 .markdown-doc li strong {
