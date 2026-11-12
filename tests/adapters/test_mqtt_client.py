@@ -3,12 +3,12 @@ from unittest.mock import MagicMock
 import pytest
 
 from src.adapters.mqtt_client import MqttClient
-from src.domain.interfaces import IBrokerClient
+from src.domain.interfaces import BrokerClient
 
 
 def test_mqtt_client_implements_interface():
     client = MqttClient(host="localhost", port=1883)
-    assert isinstance(client, IBrokerClient)
+    assert isinstance(client, BrokerClient)
 
 
 def test_mqtt_client_publish_serializes_json():

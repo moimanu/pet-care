@@ -2,7 +2,6 @@ from typing import Any, Callable, Optional
 import pytest
 
 from src.domain.entities import PetState
-from src.domain.interfaces import IBrokerClient, IStateRepository
 from src.use_cases.controller_service import ControllerService
 
 
@@ -201,12 +200,12 @@ def test_controller_sync_boot_state_from_peers_when_local_empty():
     assert repo.get_state() == peer_state
 
 
-def test_controller_service_implements_icontroller_node():
-    from src.domain.interfaces import IControllerNode
+def test_controller_service_implements_controller_node():
+    from src.domain.interfaces import ControllerNode
     repo = MockRepository()
     broker = MockBroker()
     service = ControllerService(node_id=1, repository=repo, broker=broker)
-    assert isinstance(service, IControllerNode)
+    assert isinstance(service, ControllerNode)
 
 
 

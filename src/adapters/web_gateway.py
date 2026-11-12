@@ -40,14 +40,6 @@ class WebGatewayLogHandler(logging.Handler):
             msg = record.getMessage()
             line = f"{ts} [{lvl}] ({self.component or record.name}) {msg}"
             self.gateway.broadcast("raw_log", {"source": "web", "line": line})
-            entry = {
-                "timestamp": ts,
-                "level": lvl,
-                "component": self.component or record.name,
-                "message": msg,
-                "payload": getattr(record, "payload", None),
-            }
-            self.gateway.broadcast("log", entry)
         except Exception:
             self.handleError(record)
 
@@ -203,9 +195,9 @@ class _GatewayHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
             self._handle_get_status()
         elif path == "/api/nodes":
             self._handle_get_nodes()
-        elif path in ("/api/events", "/events", "/stream"):
+        elif path == "/api/events":
             self._handle_sse()
-        elif path in ("/docs", "/swagger"):
+        elif path == "/docs":
             self._handle_static("docs.html")
         elif path == "/openapi.json":
             self._handle_static("openapi.json")
@@ -260,17 +252,8 @@ class _GatewayHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
             self._send_json(400, {"sucesso": False, "mensagem": f"ID de nó inválido: {node_id_str}"})
             return
 
-        body = self._read_json_body()
         try:
-            if action == "offline":
-                offline = bool(body.get("offline", True))
-                res = mw.set_node_offline(node_id, offline)
-                self._send_json(200, res)
-            elif action == "corrupt":
-                corrupt = bool(body.get("corrupt", True))
-                res = mw.set_node_corrupt(node_id, corrupt)
-                self._send_json(200, res)
-            elif action == "toggle_offline":
+            if action == "toggle_offline":
                 nodes = mw.get_nodes_info() if hasattr(mw, "get_nodes_info") else []
                 target = next((n for n in nodes if n.get("id") == node_id), None)
                 current = target.get("offline", False) if target else False
@@ -299,10 +282,10 @@ class _GatewayHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
         try:
             cid = body.get("command_id")
             if action == "dispense_food":
-                qty = float(body.get("quantidade", body.get("quantidade_gramas", 50.0)))
+                qty = float(body.get("quantidade", 50.0))
                 res = mw.dispensar_racao(qty, command_id=cid)
             elif action == "refill_water":
-                qty = float(body.get("quantidade", body.get("quantidade_ml", 200.0)))
+                qty = float(body.get("quantidade", 200.0))
                 res = mw.repor_agua(qty, command_id=cid)
             elif action == "clean_litter":
                 res = mw.resetar_areia(command_id=cid)
@@ -419,14 +402,12 @@ class WebGateway:
         middleware: Optional[Any] = None,
         static_dir: Optional[str] = None,
         logs_dir: Optional[str] = None,
-        mqtt_client: Optional[Any] = None,
     ) -> None:
         self.host = host
         self._requested_port = port
         self.middleware = middleware
         self.static_dir = static_dir
         self.logs_dir = logs_dir
-        self.mqtt_client = mqtt_client
         self.tailer: Optional[LogFileTailer] = None
         if self.logs_dir:
             self.tailer = LogFileTailer(gateway=self, logs_dir=self.logs_dir)

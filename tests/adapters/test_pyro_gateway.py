@@ -4,7 +4,7 @@ import pytest
 from src.adapters.pyro_gateway import PyroControllerNodeProxy, PyroControllerNodeWrapper
 from src.domain.entities import Command, CommandResult, PetState
 from src.domain.exceptions import NodeUnreachableError
-from src.domain.interfaces import IControllerNode
+from src.domain.interfaces import ControllerNode
 
 
 class DummyNode:
@@ -68,7 +68,7 @@ def test_pyro_proxy_implements_icontroller_node_and_deserializes():
     mock_raw_proxy.is_primary.return_value = False
 
     proxy = PyroControllerNodeProxy(raw_proxy=mock_raw_proxy)
-    assert isinstance(proxy, IControllerNode)
+    assert isinstance(proxy, ControllerNode)
 
     state = proxy.get_state()
     assert isinstance(state, PetState)

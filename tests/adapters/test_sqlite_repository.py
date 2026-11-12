@@ -3,7 +3,7 @@ import tempfile
 import pytest
 
 from src.domain.entities import PetState
-from src.domain.interfaces import IStateRepository
+from src.domain.interfaces import StateRepository
 from src.adapters.sqlite_repository import SqliteRepository
 
 
@@ -18,7 +18,7 @@ def temp_db_path():
 
 def test_sqlite_repository_implements_interface(temp_db_path):
     repo = SqliteRepository(temp_db_path)
-    assert isinstance(repo, IStateRepository)
+    assert isinstance(repo, StateRepository)
 
 
 def test_sqlite_repository_returns_none_when_empty(temp_db_path):

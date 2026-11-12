@@ -9,7 +9,7 @@ logger = logging.getLogger(__name__)
 
 
 class MqttClient:
-    """Paho-MQTT client adapter implementing IBrokerClient with topic routing and JSON codec."""
+    """Paho-MQTT client adapter implementing BrokerClient with topic routing and JSON codec."""
 
     def __init__(
         self,

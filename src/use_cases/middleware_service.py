@@ -153,16 +153,7 @@ class MiddlewareService:
         result = []
         for nid, node in sorted(self.nodes.items()):
             try:
-                if hasattr(node, "get_info"):
-                    info = node.get_info()
-                else:
-                    info = {
-                        "id": nid,
-                        "primary": node.is_primary(),
-                        "corrupt": False,
-                        "offline": False,
-                    }
-                result.append(info)
+                result.append(node.get_info())
             except Exception as exc:
                 result.append({
                     "id": nid,
@@ -178,19 +169,15 @@ class MiddlewareService:
         node = self.nodes.get(node_id)
         if not node:
             return False
-        if hasattr(node, "set_corrupt"):
-            node.set_corrupt(corrupt)
-            logger.warning("Middleware alterou falha bizantina no Nó %d para %s", node_id, corrupt)
-            return True
-        return False
+        node.set_corrupt(corrupt)
+        logger.warning("Middleware alterou falha bizantina no Nó %d para %s", node_id, corrupt)
+        return True
 
     def set_node_offline(self, node_id: int, offline: bool) -> bool:
         """Simulates crash-stop or recovery on target node."""
         node = self.nodes.get(node_id)
         if not node:
             return False
-        if hasattr(node, "set_offline"):
-            node.set_offline(offline)
-            logger.warning("Middleware alterou status offline no Nó %d para %s", node_id, offline)
-            return True
-        return False
+        node.set_offline(offline)
+        logger.warning("Middleware alterou status offline no Nó %d para %s", node_id, offline)
+        return True

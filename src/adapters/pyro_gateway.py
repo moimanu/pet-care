@@ -53,28 +53,19 @@ class PyroControllerNodeWrapper:
         self._node.set_primary(bool(primary))
 
     def is_corrupted(self) -> bool:
-        return bool(getattr(self._node, "is_corrupted", lambda: getattr(self._node, "is_corrupt", False))())
+        return self._node.is_corrupted()
 
     def set_corrupt(self, corrupt: bool) -> None:
-        if hasattr(self._node, "set_corrupt"):
-            self._node.set_corrupt(bool(corrupt))
+        self._node.set_corrupt(bool(corrupt))
 
     def is_offline(self) -> bool:
-        return bool(getattr(self._node, "is_offline", lambda: False)())
+        return self._node.is_offline()
 
     def set_offline(self, offline: bool) -> None:
-        if hasattr(self._node, "set_offline"):
-            self._node.set_offline(bool(offline))
+        self._node.set_offline(bool(offline))
 
     def get_info(self) -> dict[str, Any]:
-        if hasattr(self._node, "get_info"):
-            return dict(self._node.get_info())
-        return {
-            "id": getattr(self._node, "node_id", 0),
-            "primary": self.is_primary(),
-            "corrupt": self.is_corrupted(),
-            "offline": self.is_offline(),
-        }
+        return dict(self._node.get_info())
 
 
 class PyroControllerNodeProxy:

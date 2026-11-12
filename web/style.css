@@ -110,7 +110,7 @@ header {
 main.dashboard-grid {
   flex: 1;
   display: grid;
-  grid-template-columns: 300px 1fr 1fr;
+  grid-template-columns: 350px 1fr 1fr;
   overflow: hidden;
   divide-x: 1px solid var(--border);
 }
@@ -772,7 +772,7 @@ main.dashboard-grid {
   line-height: 1.5;
 }
 
-.markdown-doc > p {
+.markdown-doc>p {
   font-size: 11px;
   color: var(--muted);
   margin-bottom: 12px;
@@ -791,7 +791,7 @@ main.dashboard-grid {
   margin-bottom: 4px;
 }
 
-.markdown-doc section > p {
+.markdown-doc section>p {
   font-size: 11px;
   color: var(--muted);
   margin-bottom: 8px;

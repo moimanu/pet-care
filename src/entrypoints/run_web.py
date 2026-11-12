@@ -4,10 +4,8 @@ import argparse
 from datetime import datetime, timezone
 import json
 import logging
-import os
 from pathlib import Path
 import sys
-import threading
 import time
 from typing import Any, Callable, Optional
 
@@ -15,8 +13,6 @@ from typing import Any, Callable, Optional
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
-
-import Pyro5.api
 
 from src.adapters.mqtt_client import MqttClient
 from src.adapters.pyro_gateway import PyroMiddlewareProxy
@@ -49,7 +45,6 @@ def build_web_server(
     middleware: Optional[Any] = None,
     static_dir: Optional[str] = "web",
     logs_dir: Optional[str] = "logs",
-    mqtt_client: Optional[Any] = None,
 ) -> WebGateway:
     """Configures and returns WebGateway with all REST and SSE routes."""
     return WebGateway(
@@ -58,7 +53,6 @@ def build_web_server(
         middleware=middleware,
         static_dir=static_dir,
         logs_dir=logs_dir,
-        mqtt_client=mqtt_client,
     )
 
 
@@ -102,7 +96,6 @@ def main() -> None:
         try:
             mqtt = MqttClient(host=args.mqtt_host, port=args.mqtt_port, client_id="petcare-web-gateway")
             mqtt.connect()
-            gateway.mqtt_client = mqtt
             handler = make_mqtt_message_handler(gateway)
             mqtt.subscribe("petcare/sensores/#", handler)
             mqtt.subscribe("petcare/atuadores/#", handler)

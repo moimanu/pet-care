@@ -67,9 +67,3 @@ class ControllerNode(Protocol):
 
     def get_info(self) -> dict[str, Any]:
         ...
-
-
-# Backwards compatibility aliases during refactor
-IStateRepository = StateRepository
-IBrokerClient = BrokerClient
-IControllerNode = ControllerNode

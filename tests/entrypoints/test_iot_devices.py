@@ -1,5 +1,3 @@
-import time
-from unittest.mock import MagicMock
 import pytest
 
 from src.entrypoints.run_iot_devices import IoTDeviceSimulator

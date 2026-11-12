@@ -5,9 +5,6 @@ from src.domain.entities import Command, CommandResult, PetState
 from src.domain.interfaces import (
     BrokerClient,
     ControllerNode,
-    IBrokerClient,
-    IControllerNode,
-    IStateRepository,
     StateRepository,
 )
 
@@ -91,12 +88,9 @@ class DummyControllerNode:
 def test_interfaces_runtime_checking():
     repo = DummyRepository()
     assert isinstance(repo, StateRepository)
-    assert isinstance(repo, IStateRepository)
 
     broker = DummyBroker()
     assert isinstance(broker, BrokerClient)
-    assert isinstance(broker, IBrokerClient)
 
     node = DummyControllerNode()
     assert isinstance(node, ControllerNode)
-    assert isinstance(node, IControllerNode)

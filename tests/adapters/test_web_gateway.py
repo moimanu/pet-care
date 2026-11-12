@@ -2,10 +2,9 @@ from __future__ import annotations
 
 import json
 import logging
-import queue
 import tempfile
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 import urllib.error
 import urllib.request
 import pytest
@@ -173,10 +172,6 @@ def test_web_gateway_log_handler(gateway):
         assert msg_raw.startswith("event: raw_log\n")
         assert "Hello SSE Log" in msg_raw
         assert "TestComp" in msg_raw
-
-        msg_log = client_q.get(timeout=2.0)
-        assert msg_log.startswith("event: log\n")
-        assert "Hello SSE Log" in msg_log
     finally:
         logger.removeHandler(handler)
         gateway.unsubscribe_sse(client_q)
