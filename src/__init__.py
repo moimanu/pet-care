@@ -1,1 +1,0 @@
-"""Pet Care root package."""
