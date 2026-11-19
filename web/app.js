@@ -26,7 +26,7 @@
     "node-1": { label: "Controlador 1", cls: "tag-node-1" },
     "node-2": { label: "Controlador 2", cls: "tag-node-2" },
     "node-3": { label: "Controlador 3", cls: "tag-node-3" },
-    "middleware": { label: "Middleware", cls: "tag-middleware" },
+    "web": { label: "Cliente RPC", cls: "tag-middleware" },
     "iot": { label: "IoT Edge", cls: "tag-iot" },
     "broker": { label: "Broker MQTT", cls: "tag-broker" },
   };

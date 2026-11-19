@@ -2,31 +2,36 @@
 
 ---
 
-## 1. Topologia do Sistema
+## 1. Topologia do Sistema (Middleware Descentralizado)
 
 ```mermaid
-flowchart TD
-    CLI["Cliente / Painel Web\n(src/entrypoints/run_web.py)"]
-    MID["Middleware Pyro5\n(src/entrypoints/run_middleware.py)\n• Quórum Bizantino (2f+1)\n• Failover Transparente\n• Idempotência UUID"]
+flowchart LR
+    CLI["Cliente / Painel Web\n(src/entrypoints/run_web.py)\n• ClusterClientService\n• Quórum Bizantino (2f+1)\n• Idempotência UUID"]
 
-    C1["Controlador 1 (Primário)\n(node_1.db - Porta 9091)"]
-    C2["Controlador 2 (Réplica)\n(node_2.db - Porta 9092)"]
-    C3["Controlador 3 (Réplica)\n(node_3.db - Porta 9093)"]
+    subgraph MIDDLEWARE["MIDDLEWARE (Infraestrutura Distribuída)"]
+        direction TB
+        C1["Controlador 1 (Primário)\n(node_1.db - Porta 9091)"]
+        C2["Controlador 2 (Réplica)\n(node_2.db - Porta 9092)"]
+        C3["Controlador 3 (Réplica)\n(node_3.db - Porta 9093)"]
+
+        C1 <-->|"Sincronização de Estado (sync_state) &\nFailover P2P (Pyro5 RPC)"| C2
+        C2 <-->|"Sincronização de Estado (sync_state) &\nFailover P2P (Pyro5 RPC)"| C3
+        C1 <-->|"Sincronização de Estado (sync_state) &\nFailover P2P (Pyro5 RPC)"| C3
+    end
 
     MQTT["Broker MQTT (Mosquitto)\n(Porta 1883 TCP)"]
 
     IOT["Dispositivos IoT de Borda\n(src/entrypoints/run_iot_devices.py)\n• Sensores: Ração, Água, Areia, Fuga\n• Atuadores: Dispenser, Válvula, Alarme\n• Cache Idempotente (2s)"]
 
-    CLI -->|Pyro5 RPC| MID
-    MID -->|Pyro5 RPC| C1
-    MID -->|Pyro5 RPC| C2
-    MID -->|Pyro5 RPC| C3
+    CLI <-->|"Invocação de Métodos (Pyro5 RPC)"| C1
+    CLI <-->|"Invocação de Métodos (Pyro5 RPC)"| C2
+    CLI <-->|"Invocação de Métodos (Pyro5 RPC)"| C3
 
-    C1 <-->|Pub/Sub MQTT| MQTT
-    C2 <-->|Sub MQTT| MQTT
-    C3 <-->|Sub MQTT| MQTT
+    C1 <-->|"Pub/Sub MQTT (Ativo)"| MQTT
+    C2 <-->|"Sub MQTT (Standby)"| MQTT
+    C3 <-->|"Sub MQTT (Standby)"| MQTT
 
-    MQTT <-->|Telemetria & Comandos| IOT
+    MQTT <-->|"Telemetria & Comandos"| IOT
 ```
 
 ---
@@ -35,9 +40,8 @@ flowchart TD
 
 | Componente | Protocolo | Endereço | Objeto Pyro5 |
 | :--- | :--- | :--- | :--- |
-| **Painel Web / Gateway** | HTTP REST / SSE | `localhost:8080` | N/A |
+| **Painel Web / Cliente RPC** | HTTP REST / SSE | `localhost:8080` | N/A (Cliente `ClusterClientService`) |
 | **Broker MQTT** | TCP / MQTT | `localhost:1883` | N/A |
-| **Middleware** | TCP / Pyro5 RPC | `localhost:9090` | `petcare.middleware` |
 | **Controlador 1** | TCP / Pyro5 RPC | `localhost:9091` | `petcare.controller.1` |
 | **Controlador 2** | TCP / Pyro5 RPC | `localhost:9092` | `petcare.controller.2` |
 | **Controlador 3** | TCP / Pyro5 RPC | `localhost:9093` | `petcare.controller.3` |
@@ -89,9 +93,8 @@ CREATE TABLE IF NOT EXISTS event_log (
 ## 5. Estrutura de Diretórios (Clean Architecture)
 
 * `src/domain/`: Entidades (`PetState`, `Command`, `CommandResult`), contratos (`ControllerNode`, `StateRepository`, `BrokerClient`), exceções e `TelemetrySanityValidator`.
-* `src/use_cases/`: Regras de negócio dos controladores (`ControllerService`) e do middleware (`MiddlewareService`).
-* `src/adapters/`: Persistência SQLite (`SqliteRepository`), cliente MQTT (`MqttClient`), objetos remotos Pyro5 (`PyroGateway`) e gateway HTTP/SSE (`WebGateway`).
-* `src/entrypoints/`: Scripts de inicialização de processos (`run_controller.py`, `run_middleware.py`, `run_iot_devices.py`, `run_web.py`).
+* `src/use_cases/`: Regras de negócio e sincronização P2P dos controladores (`ControllerService`) e coordenador cliente de invocação de métodos e quórum (`ClusterClientService`).
+* `src/adapters/`: Persistência SQLite (`SqliteRepository`), cliente MQTT (`MqttClient`), objetos remotos Pyro5 dos controladores (`PyroGateway`) e gateway HTTP/SSE (`WebGateway`).
+* `src/entrypoints/`: Scripts de inicialização de processos (`run_controller.py`, `run_iot_devices.py`, `run_web.py`).
 * `web/`: Interface SPA (HTML, CSS, JS e especificação OpenAPI/Swagger).
 * `tests/`: Suíte de testes unitários e de integração espelhando as camadas de código.
-

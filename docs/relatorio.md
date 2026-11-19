@@ -22,24 +22,23 @@ O sistema gerencia 4 grandezas físicas de borda e 3 atuadores em malha fechada,
 
 ---
 
-## 2. Replicação dos Dados Armazenados
+## 2. Arquitetura do Middleware Descentralizado e Replicação dos Dados
 
-O sistema mantém **3 nós controladores independentes** (`Controlador 1`, `Controlador 2`, `Controlador 3`), cada um com seu próprio banco relacional SQLite em modo WAL (`node_1.db`, `node_2.db`, `node_3.db`).
+Seguindo fielmente a topologia da Figura 1 da especificação, o **Middleware** é a camada distribuída composta pela **invocação de métodos baseada em objetos (Pyro5 RPC)** entre clientes e controladores, pelos **3 Controladores de Processo** (`Controlador 1`, `Controlador 2`, `Controlador 3`), pela **Sincronização e Tolerância a Falhas P2P** entre os controladores e pela **Replicação nos Armazenamentos SQLite** (`node_1.db`, `node_2.db`, `node_3.db`).
 
-* **Replicação de Telemetria (Passiva via Pub/Sub):** Os 3 controladores assinam simultaneamente `petcare/sensores/#` (QoS 1) e atualizam seus bancos locais de forma independente.
-* **Replicação de Comandos (Ativa via RPC):** O Middleware despacha o comando (`Command` com `command_id` UUID) ao líder primário e o replica via Pyro5 RPC para todas as réplicas secundárias ativas (`MiddlewareService.send_command`).
-* **Sincronização de Inicialização (*Catch-up*):** Ao iniciar com banco vazio ou após recuperação, a réplica executa `sync_boot_state()`, consultando os pares via RPC para clonar o estado canônico mais recente.
+* **Sincronização Completa de Estado Canônico (*Primary-Backup State Transfer*):** Todos os 3 controladores mantêm assinatura ativa em `petcare/sensores/#` (QoS 1), porém apenas o **Controlador Líder (Primário)** processa as transições de estado (seja por telemetria MQTT ou comando RPC do cliente). A cada transição, o Líder grava o novo `PetState` no seu banco SQLite e **replica o snapshot completo do estado canônico (`peer.sync_state(...)`) diretamente para as réplicas via RPC P2P**, eliminando qualquer possibilidade de deriva entre os armazenamentos.
+* **Sincronização de Inicialização e Recuperação (*Catch-up* P2P):** Ao iniciar ou ao se recuperar de uma falha (`sync_with_peers()`), o controlador consulta seus pares via RPC para respeitar o líder ativo e clonar o `PetState` canônico mais recente para seu armazenamento local.
 
 ---
 
-## 3. Disponibilidade na Queda do Controlador (Failover Transparente)
+## 3. Disponibilidade na Queda do Controlador (Failover P2P e Transparente)
 
-Para garantir que o cliente sempre obtenha resultado positivo na execução de métodos mesmo se o controlador cair (*Crash-Stop*):
+Para garantir que o sistema continue atuando na borda e que o cliente sempre obtenha resultado positivo na execução de métodos mesmo se o controlador líder cair (*Crash-Stop*):
 
-1. **Detecção e Failover Automático:** Quando `primary_node.execute_command()` falha ou atinge timeout no Middleware, o loop de failover seleciona imediatamente a próxima réplica saudável.
-2. **Promoção de Liderança e Invariante de Líder Único:** O Middleware promove a réplica escolhida (`candidate_node.set_primary(True)`), executa o comando pendente e rebaixa os demais nós (`set_primary(False)`). Apenas o líder ativo publica comandos autônomos no MQTT, evitando triplicação de atuações na borda.
-3. **Recuperação Não-Preemptiva:** Quando um nó caído volta a ficar online, ele verifica a existência de um líder ativo e reingressa como réplica secundária sem interromper o tráfego.
-4. **Idempotência (*Exactly-Once*):** Todo comando possui `command_id` (UUID v4). Os controladores registram os IDs executados na tabela `event_log` e ignoram duplicatas; os atuadores de borda também filtram retransmissões com cache em janela deslizante de 2s.
+1. **Failover P2P Proativo entre Controladores:** Quando o Líder entra em *Crash-Stop* (ou quando as réplicas recebem telemetria MQTT e detectam ausência de um líder saudável ativo entre os pares), a réplica saudável e íntegra disponível assume automaticamente a liderança (`set_primary(True)`), rebaixa os demais pares (`set_primary(False)`) e passa a processar a telemetria MQTT e replicar o estado canônico sem interrupção.
+2. **Failover Transparente na Invocação de Métodos:** Quando o cliente (`ClusterClientService`) invoca `execute_command()` e o Líder falha ou atinge timeout, o cliente promove imediatamente a próxima réplica saudável e íntegra, reexecutando o método de forma transparente.
+3. **Recuperação Não-Preemptiva:** Quando um nó caído volta a ficar online (`set_offline(False)`), ele detecta o líder ativo via P2P, reingressa como réplica secundária e sincroniza imediatamente seu banco SQLite com o estado canônico do líder.
+4. **Idempotência (*Exactly-Once*):** Todo comando possui `command_id` (UUID v4) registrado na tabela `event_log` do Líder e replicado às réplicas via `sync_state`, impedindo reexecuções duplicadas; os atuadores de borda também filtram retransmissões com cache em janela deslizante de 2s.
 
 ---
 
@@ -47,12 +46,10 @@ Para garantir que o cliente sempre obtenha resultado positivo na execução de m
 
 O sistema resolve falhas maliciosas (nós invadidos/corrompidos) e leituras espúrias em duas camadas:
 
-### 4.1. Consenso por Quórum Bizantino ($2f + 1$) no Middleware
+### 4.1. Consenso por Quórum Bizantino ($2f + 1$) e Destituição de Líder Bizantino
 * Para tolerar $f = 1$ controlador comprometido ou com erro intermitente, o cluster opera com $N = 2f + 1 = 3$ réplicas e exige quórum mínimo de **2 respostas idênticas**.
-* Em cada leitura (`get_consensus_state`), o Middleware consulta os 3 controladores em paralelo (`ThreadPoolExecutor`, timeout de `1.0s`).
-* Cada estado retornado gera um `state_hash()` SHA-256 canônico (arredonda floats em 2 casas decimais e ignora o campo volátil `atualizado_em`).
-* Se um nó for invadido ou injetado com falha bizantina (`--corrupt`, reportando falso estado de fuga/alarme), seu hash diverge do quórum majoritário (2 votos contra 1). O Middleware **descarta a resposta adulterada**, entrega o estado íntegro ao cliente e registra alerta explícito:
-  `[SEGURANÇA] Falha Bizantina detectada no Nó X. Resposta descartada.`
+* Em cada leitura (`get_consensus_state`), o `ClusterClientService` consulta `get_state()` diretamente nos 3 controladores em paralelo (`ThreadPoolExecutor`, timeout de `1.0s`) e compara o `state_hash()` SHA-256 canônico de cada resposta.
+* **Isolamento e Destituição Automática:** Um nó corrompido (`--corrupt`) tem sua falha isolada sem contaminar os armazenamentos das réplicas honestas via `sync_state`. Se um nó responder valores divergentes do quórum majoritário (2 votos contra 1), sua resposta é descartada com alerta `[SEGURANÇA] Falha Bizantina detectada no Nó X. Resposta descartada.` e, caso o nó comprometido seja o Líder atual, ele é **automaticamente destituído da liderança** em favor de uma réplica íntegra.
 
 ### 4.2. Validação Física e Sanitização (`TelemetrySanityValidator`)
 * Antes de persistir telemetria ou enviar comandos, o domínio valida tipos e limites físicos estritos:
@@ -60,5 +57,4 @@ O sistema resolve falhas maliciosas (nós invadidos/corrompidos) e leituras esp�
   * `agua`: `0.0 <= nivel_ml <= 1000.0`
   * `areia`: `usos_acumulados >= 0`
   * `fuga`: `perimetro in {"DENTRO", "FORA"}`
-* Payloads malformados, negativos ou fora de escala (erros intermitentes de sensores ou ataques de injeção no broker) lançam `SanityError` e são descartados antes de alterar o estado.
-
+* Payloads malformados, negativos ou fora de escala lançam `SanityError` e são descartados antes de alterar o estado.

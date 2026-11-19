@@ -159,7 +159,7 @@
               <button class="term-tab" data-tab="node-1" role="tab" aria-selected="false">Controlador 1</button>
               <button class="term-tab" data-tab="node-2" role="tab" aria-selected="false">Controlador 2</button>
               <button class="term-tab" data-tab="node-3" role="tab" aria-selected="false">Controlador 3</button>
-              <button class="term-tab" data-tab="middleware" role="tab" aria-selected="false">Middleware</button>
+              <button class="term-tab" data-tab="web" role="tab" aria-selected="false">Cliente RPC</button>
               <button class="term-tab" data-tab="iot" role="tab" aria-selected="false">IoT Edge</button>
               <button class="term-tab" data-tab="broker" role="tab" aria-selected="false">Broker MQTT</button>
             </div>
@@ -218,23 +218,26 @@
         <article class="col3-tab-pane markdown-doc" id="panel-col3-guide">
           <section>
             <h4>1. Tolerância a Falhas Bizantinas (2f + 1)</h4>
-            <p>Simula um controlador fornecendo respostas falsificadas (ataque ou erro intermitente).</p>
+            <p>Simula um controlador fornecendo respostas falsificadas (ataque ou erro intermitente) sem contaminar os armazenamentos das réplicas honestas.</p>
             <ul>
               <li><strong>Ação na Interface:</strong> na aba <strong>Controladores</strong>, no nó <strong>Controlador
-                  3</strong>, clique em <code>Corromper</code>.</li>
-              <li><strong>Endpoint:</strong> <code>GET /api/status</code></li>
-              <li><strong>Log no Terminal:</strong>
-                <pre><code>[ERROR] (Middleware) [SEGURANCA] Falha Bizantina detectada no No 3. Resposta descartada.</code></pre>
+                  3</strong> (réplica) ou no <strong>Controlador 1</strong> (líder), clique em <code>Corromper</code>.</li>
+              <li><strong>Endpoint:</strong> <code>GET /api/status</code> (ou aguarde a leitura periódica do painel)</li>
+              <li><strong>Log no Terminal (Réplica Corrompida):</strong>
+                <pre><code>[ERROR] (ClusterClient) [SEGURANCA] Falha Bizantina detectada no No 3. Resposta descartada.</code></pre>
+              </li>
+              <li><strong>Log no Terminal (Líder Corrompido — Destituição P2P):</strong>
+                <pre><code>[WARN] (Controller-Node1) [SEGURANCA] Lider No 1 entrou em estado bizantino. Destituindo lideranca e promovendo replica integra.</code></pre>
               </li>
             </ul>
           </section>
 
           <section>
-            <h4>2. Failover Crash-Stop (Queda do Primário)</h4>
-            <p>Simula queda abrupta do nó primário durante o processamento de comando do cliente.</p>
+            <h4>2. Failover Crash-Stop e Sincronização de Estado Canônico</h4>
+            <p>Simula queda abrupta do líder com eleição P2P imediata e replicação do estado canônico (<code>sync_state</code>) para manter todos os armazenamentos iguais ao líder ativo.</p>
             <ul>
               <li><strong>Ação na Interface:</strong> na aba <strong>Controladores</strong>, no nó <strong>Controlador 1
-                  (Líder)</strong>, clique em <code>Derrubar</code>.</li>
+                  (Líder)</strong>, clique em <code>Derrubar</code> (o <strong>Controlador 2</strong> assume a liderança via P2P imediatamente).</li>
               <li>
                 <div class="code-header">
                   <strong>Endpoint & Payload:</strong>
@@ -245,15 +248,17 @@
 {"quantidade": 50.0}</code></pre>
               </li>
               <li><strong>Logs no Terminal:</strong>
-                <pre><code>[WARNING] (Middleware) No Primario 1 inalcancavel... Iniciando failover transparente.
-[INFO] (Middleware) No 2 promovido com sucesso a novo Lider Primario.</code></pre>
+                <pre><code>[WARN] (Controller-Node1) Lider No 1 entrou em crash-stop. Acionando failover P2P para replica saudavel.
+[INFO] (Controller-Node2) No 2 assumiu a lideranca primaria do cluster.
+[INFO] (ClusterClient) Metodo RPC LIBERAR_RACAO invocado com sucesso no Lider No 2 (command_id=...)
+[INFO] (Controller-Node3) No 3 sincronizou estado canonico do Lider (evento=LIBERAR_RACAO, command_id=...)</code></pre>
               </li>
             </ul>
           </section>
 
           <section>
             <h4>3. Idempotência (Semântica Exactly-Once)</h4>
-            <p>Comprova que retransmissões com o mesmo <code>command_id</code> não duplicam atuações físicas.</p>
+            <p>Comprova que retransmissões com o mesmo <code>command_id</code> (inclusive após failover) não duplicam atuações físicas nem alteram o banco duas vezes.</p>
             <ul>
               <li><strong>Como Executar:</strong> dispare duas vezes consecutivas a requisição abaixo com o mesmo UUID.
               </li>
@@ -267,14 +272,14 @@
 {"quantidade": 50.0, "command_id": "00000000-0000-0000-0000-000000000001"}</code></pre>
               </li>
               <li><strong>Log no Terminal (2ª execução):</strong>
-                <pre><code>[WARNING] (Controller-Node1) No 1: Comando duplicado ignorado por idempotencia (command_id=00000000-0000-0000-0000-000000000001)</code></pre>
+                <pre><code>[WARN] (Controller-Node1) No 1: Comando duplicado ignorado por idempotencia (command_id=00000000-0000-0000-0000-000000000001)</code></pre>
               </li>
             </ul>
           </section>
 
           <section>
             <h4>4. Sanitização de Entradas (Validação de Domínio)</h4>
-            <p>Verifica a rejeição de dados anômalos pelo validador antes de atingir o banco relacional.</p>
+            <p>Verifica a rejeição imediata de dados anômalos pelo validador de domínio antes de invocar o controlador ou atingir o armazenamento SQLite.</p>
             <ul>
               <li>
                 <div class="code-header">
@@ -285,8 +290,8 @@
                 <pre id="code-preset-sanitization"><code>POST /api/command/dispense_food
 {"quantidade": -50.0}</code></pre>
               </li>
-              <li><strong>Log no Terminal (HTTP 400):</strong>
-                <pre><code>[WARNING] (WebGateway) Falha na validacao/execucao do comando dispense_food: Quantidade de racao invalida: -50.0g...</code></pre>
+              <li><strong>Log no Terminal (HTTP 400 na aba Cliente RPC):</strong>
+                <pre><code>[WARN] (ClusterClient) Falha na validacao/execucao do comando dispense_food: Quantidade de racao invalida: -50.0g...</code></pre>
               </li>
             </ul>
           </section>
