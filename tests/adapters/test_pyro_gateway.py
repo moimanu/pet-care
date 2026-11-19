@@ -1,4 +1,6 @@
+from typing import Optional
 from unittest.mock import MagicMock
+import threading
 import pytest
 
 from src.adapters.pyro_gateway import PyroControllerNodeProxy, PyroControllerNodeWrapper
@@ -25,6 +27,16 @@ class DummyNode:
     def execute_command(self, cmd: Command) -> CommandResult:
         return CommandResult(sucesso=True, mensagem="ok", estado=self._state)
 
+    def sync_state(
+        self,
+        state: PetState,
+        command_id: Optional[str] = None,
+        tipo_evento: str = "",
+        payload: str = "",
+    ) -> bool:
+        self._state = state
+        return True
+
     def is_primary(self) -> bool:
         return self._primary
 
@@ -32,7 +44,7 @@ class DummyNode:
         self._primary = primary
 
 
-def test_pyro_wrapper_serializes_state_and_command():
+def test_pyro_wrapper_serializes_state_command_and_sync_state():
     node = DummyNode()
     wrapper = PyroControllerNodeWrapper(node)
 
@@ -50,6 +62,17 @@ def test_pyro_wrapper_serializes_state_and_command():
     assert result_dict["sucesso"] is True
     assert result_dict["estado"]["racao_gramas"] == 150.0
 
+    new_state_dict = {
+        "racao_gramas": 275.0,
+        "agua_ml": 450.0,
+        "areia_usos": 0,
+        "status_fuga": "DENTRO",
+        "alarme_ativo": False,
+        "atualizado_em": "2026-11-10T16:00:00Z",
+    }
+    assert wrapper.sync_state(new_state_dict, command_id="sync-1", tipo_evento="LIBERAR_RACAO", payload="{}") is True
+    assert wrapper.get_state()["racao_gramas"] == 275.0
+
     assert wrapper.is_primary() is True
     wrapper.set_primary(False)
     assert wrapper.is_primary() is False
@@ -66,6 +89,7 @@ def test_pyro_proxy_implements_icontroller_node_and_deserializes():
         "atualizado_em": "2026-11-10T15:00:00Z",
     }
     mock_raw_proxy.is_primary.return_value = False
+    mock_raw_proxy.sync_state.return_value = True
 
     proxy = PyroControllerNodeProxy(raw_proxy=mock_raw_proxy)
     assert isinstance(proxy, ControllerNode)
@@ -73,6 +97,9 @@ def test_pyro_proxy_implements_icontroller_node_and_deserializes():
     state = proxy.get_state()
     assert isinstance(state, PetState)
     assert state.racao_gramas == 200.0
+
+    assert proxy.sync_state(state, command_id="cid-1", tipo_evento="LIBERAR_RACAO", payload="{}") is True
+    mock_raw_proxy.sync_state.assert_called_once()
 
     assert proxy.is_primary() is False
     proxy.set_primary(True)
@@ -89,45 +116,11 @@ def test_pyro_proxy_translates_communication_error_to_domain_exception():
         proxy.get_state()
 
 
-def test_pyro_middleware_proxy_forwarding():
-    from src.adapters.pyro_gateway import PyroMiddlewareProxy
-
-    mock_raw = MagicMock()
-    mock_raw.get_pet_status.return_value = {"sucesso": True, "estado": {"racao_gramas": 100.0}}
-    mock_raw.dispensar_racao.return_value = {"sucesso": True, "mensagem": "ok"}
-    mock_raw.repor_agua.return_value = {"sucesso": True, "mensagem": "ok"}
-    mock_raw.resetar_areia.return_value = {"sucesso": True, "mensagem": "ok"}
-    mock_raw.silenciar_alarme.return_value = {"sucesso": True, "mensagem": "ok"}
-
-    proxy = PyroMiddlewareProxy(raw_proxy=mock_raw)
-
-    status = proxy.get_pet_status()
-    assert status["sucesso"] is True
-    assert status["estado"]["racao_gramas"] == 100.0
-
-    res = proxy.dispensar_racao(50.0)
-    assert res["sucesso"] is True
-    mock_raw.dispensar_racao.assert_called_with(50.0)
-
-    res_agua = proxy.repor_agua(200.0)
-    assert res_agua["sucesso"] is True
-
-    res_areia = proxy.resetar_areia()
-    assert res_areia["sucesso"] is True
-
-    res_alarme = proxy.silenciar_alarme()
-    assert res_alarme["sucesso"] is True
-
-
-def test_pyro_middleware_proxy_thread_local_isolation():
-    import threading
-    from src.adapters.pyro_gateway import PyroMiddlewareProxy
-
-    proxy = PyroMiddlewareProxy(uri="PYRO:petcare.middleware@localhost:9090")
+def test_pyro_controller_proxy_thread_local_isolation():
+    proxy = PyroControllerNodeProxy(uri="PYRO:petcare.controller.1@localhost:9091")
     results = {}
 
     def worker(tid: int):
-        # Access thread-local proxy without crashing across threads
         local_p = proxy._get_proxy()
         results[tid] = id(local_p)
 
@@ -138,5 +131,4 @@ def test_pyro_middleware_proxy_thread_local_isolation():
     t1.join()
     t2.join()
 
-    # Proxies instantiated on separate threads must be distinct instances
     assert results[1] != results[2]

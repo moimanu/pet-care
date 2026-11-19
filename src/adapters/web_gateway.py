@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import deque
+from dataclasses import asdict, is_dataclass
 from datetime import datetime
 import http.server
 import json
@@ -32,7 +33,10 @@ class WebGatewayLogHandler(logging.Handler):
             lvl = "WARN" if record.levelname == "WARNING" else record.levelname
             ts = datetime.fromtimestamp(record.created).astimezone().isoformat()
             line = f"{ts} [{lvl}] ({self.component or record.name}) {record.getMessage()}"
-            self.gateway.broadcast("raw_log", {"source": "web", "line": line})
+            entry = {"source": "web", "line": line}
+            if self.gateway.tailer is not None:
+                self.gateway.tailer.record_entry(entry)
+            self.gateway.broadcast("raw_log", entry)
         except Exception:
             self.handleError(record)
 
@@ -42,7 +46,7 @@ class LogFileTailer:
 
     SOURCE_MAP = {
         "controller_1": "node-1", "controller_2": "node-2", "controller_3": "node-3",
-        "middleware": "middleware", "iot_devices": "iot",
+        "iot_devices": "iot",
     }
 
     def __init__(
@@ -61,12 +65,15 @@ class LogFileTailer:
         with self._lock:
             return list(self._history)
 
+    def record_entry(self, entry: dict[str, str]) -> None:
+        with self._lock:
+            self._history.append(entry)
+
     def _emit_lines(self, source_id: str, lines: list[str]) -> None:
         for raw in lines:
             if line := raw.rstrip("\r\n"):
                 entry = {"source": source_id, "line": line}
-                with self._lock:
-                    self._history.append(entry)
+                self.record_entry(entry)
                 self.gateway.broadcast("raw_log", entry)
 
     def poll_once(self) -> None:
@@ -199,17 +206,25 @@ class _GatewayHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
             return self._send_json(404, {"sucesso": False, "mensagem": f"Ação de nó desconhecida: {action}"})
 
         field, method = actions[action]
-        self._run_mw(lambda mw: getattr(mw, method)(
-            node_id,
-            not next((n for n in (mw.get_nodes_info() if hasattr(mw, "get_nodes_info") else []) if n.get("id") == node_id), {}).get(field, False),
-        ))
+        def _toggle(mw: Any) -> Mapping[str, Any]:
+            current_val = next(
+                (n for n in (mw.get_nodes_info() if hasattr(mw, "get_nodes_info") else []) if n.get("id") == node_id),
+                {},
+            ).get(field, False)
+            new_val = not current_val
+            raw = getattr(mw, method)(node_id, new_val)
+            if isinstance(raw, Mapping):
+                return raw
+            return {"sucesso": bool(raw), "node_id": node_id, field: new_val}
+
+        self._run_mw(_toggle)
 
     def _handle_command(self, action: str) -> None:
         if not (mw := self._require_middleware()):
             return
         body = self._read_json_body()
         cid = body.get("command_id")
-        commands: dict[str, Callable[[], dict[str, Any]]] = {
+        commands: dict[str, Callable[[], Any]] = {
             "dispense_food": lambda: mw.dispensar_racao(float(body.get("quantidade", 50.0)), command_id=cid),
             "refill_water": lambda: mw.repor_agua(float(body.get("quantidade", 200.0)), command_id=cid),
             "clean_litter": lambda: mw.resetar_areia(command_id=cid),
@@ -219,7 +234,16 @@ class _GatewayHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
             return self._send_json(404, {"sucesso": False, "mensagem": f"Comando desconhecido: {action}"})
 
         try:
-            res = commands[action]()
+            raw_res = commands[action]()
+            if is_dataclass(raw_res) and not isinstance(raw_res, type):
+                estado_obj = getattr(raw_res, "estado", None)
+                res: dict[str, Any] = {
+                    "sucesso": bool(getattr(raw_res, "sucesso", True)),
+                    "mensagem": str(getattr(raw_res, "mensagem", "")),
+                    "estado": asdict(estado_obj) if is_dataclass(estado_obj) else estado_obj,
+                }
+            else:
+                res = dict(raw_res)
             if res.get("sucesso") and res.get("estado"):
                 self.server.gateway.broadcast("state", res["estado"])
             self._send_json(200, res)
