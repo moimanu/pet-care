@@ -6,7 +6,7 @@ import uuid
 
 import Pyro5.api
 
-from app.controller import ALL_NODES, peer_uri
+from app.config import ALL_NODES, peer_uri
 from app.event_bus import emit_event
 
 
@@ -102,28 +102,24 @@ class ClusterRpcClient:
         if self._on_consensus_update is not None:
             self._on_consensus_update(consensus)
 
-    def _ping_node(self, node_id: int) -> dict:
-        try:
-            with _proxy(node_id) as p:
-                return {"node_id": node_id, "ok": True, "data": p.ping()}
-        except Exception as exc:
-            return {"node_id": node_id, "ok": False, "error": str(exc)}
+    def _query_all_nodes(self, method: str) -> list[dict]:
+        """Chama `method` (ping/get_state) em todos os nos em paralelo."""
+
+        def query(node_id: int) -> dict:
+            try:
+                with _proxy(node_id) as p:
+                    return {"node_id": node_id, "ok": True, "data": getattr(p, method)()}
+            except Exception as exc:
+                return {"node_id": node_id, "ok": False, "error": str(exc)}
+
+        with ThreadPoolExecutor(max_workers=3) as pool:
+            return list(pool.map(query, ALL_NODES))
 
     def get_nodes_status(self) -> list[dict]:
-        with ThreadPoolExecutor(max_workers=3) as pool:
-            return list(pool.map(self._ping_node, ALL_NODES))
-
-    def _fetch_node_state(self, node_id: int) -> dict:
-        try:
-            with _proxy(node_id) as p:
-                data = p.get_state()
-                return {"node_id": node_id, "ok": True, "data": data}
-        except Exception as exc:
-            return {"node_id": node_id, "ok": False, "error": str(exc)}
+        return self._query_all_nodes("ping")
 
     def get_consensus_state(self, log_result: bool = True, enforce_leader: bool = True) -> dict:
-        with ThreadPoolExecutor(max_workers=3) as pool:
-            results = list(pool.map(self._fetch_node_state, ALL_NODES))
+        results = self._query_all_nodes("get_state")
 
         valid = [r for r in results if r["ok"]]
         if len(valid) < 2:
@@ -205,6 +201,11 @@ class ClusterRpcClient:
             emit_event("rpc", f"Falha ao alterar modo bizantino no No {target_id}: {exc}", "ERROR")
             return False
 
+    def _promote_first_available(self, candidates: list[int]) -> None:
+        for cand in candidates:
+            if self.promote_node(cand):
+                break
+
     def _find_leader(self) -> int | None:
         alive = []
         for nid in ALL_NODES:
@@ -243,16 +244,9 @@ class ClusterRpcClient:
                     emit_event("rpc", f"RPC {action} ({cmd_id[:8]}) -> No {leader_id} OK{tag}")
                     return {**res, "command_id": cmd_id, "node_id": leader_id}
                 emit_event("rpc", f"No {leader_id} recusou ({res.get('error')}); tentando failover", "WARN")
-                remaining = [n for n in ALL_NODES if n not in tried]
-                for cand in remaining:
-                    if self.promote_node(cand):
-                        break
             except Exception as exc:
                 emit_event("rpc", f"Falha RPC no Lider {leader_id}: {exc}; iniciando failover", "WARN")
-                remaining = [n for n in ALL_NODES if n not in tried]
-                for cand in remaining:
-                    if self.promote_node(cand):
-                        break
+            self._promote_first_available([n for n in ALL_NODES if n not in tried])
 
         emit_event("rpc", f"Falha ao executar {action}: nenhum controlador disponivel", "ERROR")
         return {"ok": False, "error": "CLUSTER_UNAVAILABLE", "command_id": cmd_id}

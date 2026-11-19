@@ -1,4 +1,4 @@
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -41,13 +41,9 @@ class PetState:
         )
 
     def canonical_hash(self) -> str:
-        core = {
-            "racao_gramas": round(float(self.racao_gramas), 2),
-            "agua_ml": round(float(self.agua_ml), 2),
-            "areia_usos": int(self.areia_usos),
-            "status_fuga": str(self.status_fuga),
-            "alarme_ativo": bool(self.alarme_ativo),
-        }
+        """Hash do estado (sem o timestamp), usado para comparar replicas."""
+        core = {**self.to_dict(), "racao_gramas": round(self.racao_gramas, 2), "agua_ml": round(self.agua_ml, 2)}
+        del core["atualizado_em"]
         raw = json.dumps(core, sort_keys=True).encode("utf-8")
         return hashlib.sha256(raw).hexdigest()[:12]
 
@@ -81,9 +77,13 @@ def validate_telemetry(sensor: str, payload: dict) -> dict:
     raise ValueError(f"Sensor desconhecido: {sensor}")
 
 
+def _actuator(topic: str, **payload) -> dict:
+    return {"topic": f"petcare/atuadores/{topic}", "payload": payload}
+
+
 def apply_telemetry(state: PetState, sensor: str, payload: dict) -> tuple[PetState, list[dict]]:
     clean = validate_telemetry(sensor, payload)
-    nxt = PetState.from_dict({**state.to_dict(), "atualizado_em": utc_now_iso()})
+    nxt = replace(state, atualizado_em=utc_now_iso())
     actuators: list[dict] = []
 
     if sensor == "racao":
@@ -96,40 +96,27 @@ def apply_telemetry(state: PetState, sensor: str, payload: dict) -> tuple[PetSta
         nxt.status_fuga = clean["perimetro"]
         if nxt.status_fuga == "FORA":
             nxt.alarme_ativo = True
-            actuators.append({
-                "topic": "petcare/atuadores/alarme",
-                "payload": {"acao": "DISPARAR_ALARME", "motivo": "FUGA_DETECTADA"},
-            })
+            actuators.append(_actuator("alarme", acao="DISPARAR_ALARME", motivo="FUGA_DETECTADA"))
 
     return nxt, actuators
 
 
 def apply_command(state: PetState, action: str) -> tuple[PetState, list[dict]]:
-    nxt = PetState.from_dict({**state.to_dict(), "atualizado_em": utc_now_iso()})
+    nxt = replace(state, atualizado_em=utc_now_iso())
     actuators: list[dict] = []
 
     if action == "LIBERAR_RACAO":
         nxt.racao_gramas = min(500.0, nxt.racao_gramas + 50.0)
-        actuators.append({
-            "topic": "petcare/atuadores/dispenser",
-            "payload": {"acao": "LIBERAR_RACAO", "quantidade_gramas": 50.0},
-        })
+        actuators.append(_actuator("dispenser", acao=action, quantidade_gramas=50.0))
     elif action == "REPOR_AGUA":
         nxt.agua_ml = min(1000.0, nxt.agua_ml + 200.0)
-        actuators.append({
-            "topic": "petcare/atuadores/valvula",
-            "payload": {"acao": "REPOR_AGUA", "quantidade_ml": 200.0},
-        })
+        actuators.append(_actuator("valvula", acao=action, quantidade_ml=200.0))
     elif action == "RESETAR_AREIA":
         nxt.areia_usos = 0
     elif action == "SILENCIAR_ALARME":
         nxt.alarme_ativo = False
-        actuators.append({
-            "topic": "petcare/atuadores/alarme",
-            "payload": {"acao": "SILENCIAR_ALARME"},
-        })
+        actuators.append(_actuator("alarme", acao=action))
     else:
         raise ValueError(f"Comando desconhecido: {action}")
 
     return nxt, actuators
-

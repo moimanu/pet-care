@@ -9,7 +9,7 @@ import time
 
 import paho.mqtt.client as mqtt
 
-from app.controller import ALL_NODES
+from app.config import ALL_NODES, BASE_PORT, MQTT_HOST, MQTT_PORT
 from app.event_bus import LOG_FILE, add_listener, emit_event
 from app.rpc_client import ClusterRpcClient
 from app.storage import NodeStorage
@@ -135,14 +135,14 @@ class AppContext:
 
     def _connect_mqtt(self) -> None:
         try:
-            self.mqtt.connect("localhost", 1883, keepalive=30)
+            self.mqtt.connect(MQTT_HOST, MQTT_PORT, keepalive=30)
             self.mqtt.loop_start()
         except Exception as exc:
-            emit_event("mqtt", f"Broker indisponivel em localhost:1883 ({exc})", "ERROR")
+            emit_event("mqtt", f"Broker indisponivel em {MQTT_HOST}:{MQTT_PORT} ({exc})", "ERROR")
 
     def _on_connect(self, client, userdata, flags, reason_code, properties=None) -> None:
         self.mqtt_connected = True
-        emit_event("mqtt", "Broker Mosquitto conectado em localhost:1883")
+        emit_event("mqtt", f"Broker Mosquitto conectado em {MQTT_HOST}:{MQTT_PORT}")
 
     def _on_disconnect(self, client, userdata, flags, reason_code, properties=None) -> None:
         self.mqtt_connected = False
@@ -150,13 +150,7 @@ class AppContext:
 
     def build_state_payload(self) -> dict:
         node_map = {n["node_id"]: n for n in self.rpc.get_nodes_status()}
-        consensus = self.last_consensus or {
-            "quorum_reached": None,
-            "votes": "--",
-            "majority_hash": None,
-            "state": None,
-            "divergent": [],
-        }
+        consensus = self.last_consensus or {}
 
         controllers = []
         storage = []
@@ -173,7 +167,7 @@ class AppContext:
                 "byzantine": bool(data.get("byzantine", False)),
                 "hash": data.get("hash"),
                 "divergent": nid in consensus.get("divergent", []),
-                "port": 9090 + nid,
+                "port": BASE_PORT + nid,
             })
             snap = NodeStorage(f"node_{nid}.db").get_snapshot()
             storage.append({"id": nid, "db": f"node_{nid}.db", **snap})
@@ -188,7 +182,7 @@ class AppContext:
             },
             "controllers": controllers,
             "storage": storage,
-            "mqtt": {"connected": self.mqtt_connected, "endpoint": "localhost:1883"},
+            "mqtt": {"connected": self.mqtt_connected, "endpoint": f"{MQTT_HOST}:{MQTT_PORT}"},
             "sensors": {"alive": self.procs.is_sensors_alive()},
         }
 
@@ -219,14 +213,12 @@ class AppContext:
             return self.last_consensus
 
         if op == "rpc_promote":
-            nid = int(body["node_id"])
-            ok = self.rpc.promote_node(nid)
+            ok = self.rpc.promote_node(int(body["node_id"]))
             self.notify_clients()
             return {"ok": ok}
 
         if op == "controller_stop":
-            nid = int(body["node_id"])
-            ok = self.procs.stop_controller(nid)
+            ok = self.procs.stop_controller(int(body["node_id"]))
             self.notify_clients()
             return {"ok": ok}
 
@@ -239,9 +231,7 @@ class AppContext:
             return {"ok": ok}
 
         if op == "controller_byzantine":
-            nid = int(body["node_id"])
-            flag = bool(body.get("enabled", True))
-            return {"ok": self.rpc.set_byzantine(nid, flag)}
+            return {"ok": self.rpc.set_byzantine(int(body["node_id"]), bool(body.get("enabled", True)))}
 
         if op == "storage_mutate":
             nid = int(body["node_id"])

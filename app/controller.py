@@ -8,18 +8,10 @@ import uuid
 import paho.mqtt.client as mqtt
 import Pyro5.api
 
+from app.config import ALL_NODES, BASE_PORT, MQTT_HOST, MQTT_PORT, peer_uri
 from app.domain import PetState, apply_command, apply_telemetry
 from app.event_bus import emit_event
 from app.storage import NodeStorage
-
-ALL_NODES = (1, 2, 3)
-BASE_PORT = 9090
-MQTT_HOST = "localhost"
-MQTT_PORT = 1883
-
-
-def peer_uri(node_id: int) -> str:
-    return f"PYRO:petcare.controller.{node_id}@localhost:{BASE_PORT + node_id}"
 
 
 @Pyro5.api.expose
@@ -34,8 +26,26 @@ class PetController:
         self._observers: set[str] = set()
         self.mqtt = self._setup_mqtt()
         self._catch_up_from_peers()
-        role = "LIDER" if self.is_primary else "REPLICA"
-        emit_event(f"controller_{node_id}", f"Controlador {node_id} iniciado na porta {BASE_PORT + node_id} ({role})")
+        self._log(f"Controlador {node_id} iniciado na porta {BASE_PORT + node_id} ({self._role()})")
+
+    def _log(self, message: str, level: str = "INFO") -> None:
+        emit_event(f"controller_{self.node_id}", message, level)
+
+    def _role(self) -> str:
+        return "LIDER" if self.is_primary else "REPLICA"
+
+    def _visible_state(self) -> PetState:
+        """Estado exposto aos demais nos: adulterado se o no estiver em modo bizantino."""
+        return self._forged_state() if self.byzantine else self.storage.load_state()
+
+    def _state_snapshot(self, state: PetState) -> dict:
+        return {
+            **state.to_dict(),
+            "node_id": self.node_id,
+            "is_primary": self.is_primary,
+            "byzantine": self.byzantine,
+            "hash": state.canonical_hash(),
+        }
 
     def _setup_mqtt(self) -> mqtt.Client:
         client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=f"petcare_ctrl_{self.node_id}")
@@ -45,22 +55,23 @@ class PetController:
             client.connect(MQTT_HOST, MQTT_PORT, keepalive=30)
             client.loop_start()
         except Exception as exc:
-            emit_event(f"controller_{self.node_id}", f"Falha ao conectar ao MQTT: {exc}", "ERROR")
+            self._log(f"Falha ao conectar ao MQTT: {exc}", "ERROR")
         return client
 
     def _on_mqtt_connect(self, client, userdata, flags, reason_code, properties=None) -> None:
         client.subscribe("petcare/sensores/#", qos=1)
-        emit_event(f"controller_{self.node_id}", "Inscrito em petcare/sensores/# (QoS 1)")
+        self._log("Inscrito em petcare/sensores/# (QoS 1)")
 
     def _peer_proxy(self, pid: int) -> Pyro5.api.Proxy:
         proxy = Pyro5.api.Proxy(peer_uri(pid))
         proxy._pyroTimeout = 1.0
         return proxy
 
+    def _peer_ids(self) -> list[int]:
+        return [pid for pid in ALL_NODES if pid != self.node_id]
+
     def _catch_up_from_peers(self) -> None:
-        for pid in ALL_NODES:
-            if pid == self.node_id:
-                continue
+        for pid in self._peer_ids():
             try:
                 with self._peer_proxy(pid) as proxy:
                     info = proxy.ping()
@@ -78,9 +89,7 @@ class PetController:
 
     def _active_peers(self) -> list[tuple[int, dict]]:
         alive = []
-        for pid in ALL_NODES:
-            if pid == self.node_id:
-                continue
+        for pid in self._peer_ids():
             try:
                 with self._peer_proxy(pid) as proxy:
                     alive.append((pid, proxy.ping()))
@@ -95,24 +104,18 @@ class PetController:
         lowest_alive = min([self.node_id] + [pid for pid, _ in alive])
         if lowest_alive == self.node_id:
             self.is_primary = True
-            emit_event(
-                f"controller_{self.node_id}",
-                f"Failover P2P: nenhum lider ativo; No {self.node_id} assumiu lideranca",
-                "WARN",
-            )
+            self._log(f"Failover P2P: nenhum lider ativo; No {self.node_id} assumiu lideranca", "WARN")
             return True
         return False
 
     def _replicate_to_peers(self, state: PetState, command_id: str | None, kind: str, payload: str) -> None:
         state_dict = state.to_dict()
-        for pid in ALL_NODES:
-            if pid == self.node_id:
-                continue
+        for pid in self._peer_ids():
             try:
                 with self._peer_proxy(pid) as proxy:
                     proxy.sync_state(state_dict, command_id, kind, payload)
             except Exception as exc:
-                emit_event(f"controller_{self.node_id}", f"Replica {pid} inacessivel no sync: {exc}", "WARN")
+                self._log(f"Replica {pid} inacessivel no sync: {exc}", "WARN")
 
     def _publish_actuators(self, actuators: list[dict], command_id: str) -> None:
         for cmd in actuators:
@@ -135,15 +138,7 @@ class PetController:
             uris = list(self._observers)
         if not uris:
             return
-        payload = {
-            **state.to_dict(),
-            "node_id": self.node_id,
-            "is_primary": self.is_primary,
-            "byzantine": self.byzantine,
-            "hash": state.canonical_hash(),
-            "reason": reason,
-            "event_id": event_id,
-        }
+        payload = {**self._state_snapshot(state), "reason": reason, "event_id": event_id}
 
         def _push() -> None:
             dead: list[str] = []
@@ -192,19 +187,16 @@ class PetController:
                 cmd_id = str(uuid.uuid4())
                 self.storage.save_state(nxt)
                 self.storage.record_event(cmd_id, f"TELEMETRIA_{sensor.upper()}", raw)
-                emit_event(
-                    f"controller_{self.node_id}",
-                    f"Telemetria MQTT {sensor} processada ({cmd_id[:8]})",
-                )
+                self._log(f"Telemetria MQTT {sensor} processada ({cmd_id[:8]})")
                 emit_event(f"storage_{self.node_id}", f"Persistido {sensor} (hash {nxt.canonical_hash()})")
                 self._publish_actuators(actuators, cmd_id)
                 self._replicate_to_peers(nxt, cmd_id, f"TELEMETRIA_{sensor.upper()}", raw)
                 self._notify_observers(nxt, f"TELEMETRIA_{sensor.upper()}", cmd_id)
             except Exception as exc:
-                emit_event(f"controller_{self.node_id}", f"Telemetria rejeitada ({sensor}): {exc}", "ERROR")
+                self._log(f"Telemetria rejeitada ({sensor}): {exc}", "ERROR")
 
     def ping(self) -> dict:
-        state = self._forged_state() if self.byzantine else self.storage.load_state()
+        state = self._visible_state()
         return {
             "id": self.node_id,
             "is_primary": self.is_primary,
@@ -222,39 +214,21 @@ class PetController:
         with self._lock:
             self.byzantine = bool(flag)
             if self.byzantine:
-                emit_event(
-                    f"controller_{self.node_id}",
-                    f"Modo BIZANTINO ativado: No {self.node_id} enviando estado adulterado",
-                    "ERROR",
-                )
+                self._log(f"Modo BIZANTINO ativado: No {self.node_id} enviando estado adulterado", "ERROR")
             else:
-                emit_event(
-                    f"controller_{self.node_id}",
-                    f"Modo BIZANTINO desativado: No {self.node_id} restaurado",
-                    "WARN",
-                )
+                self._log(f"Modo BIZANTINO desativado: No {self.node_id} restaurado", "WARN")
                 self._catch_up_from_peers()
-            current = self._forged_state() if self.byzantine else self.storage.load_state()
-            self._notify_observers(current, "BYZANTINE_TOGGLE")
+            self._notify_observers(self._visible_state(), "BYZANTINE_TOGGLE")
             return self.byzantine
 
     def set_primary(self, flag: bool) -> bool:
         self.is_primary = bool(flag)
-        role = "LIDER" if self.is_primary else "REPLICA"
-        emit_event(f"controller_{self.node_id}", f"Papel alterado para {role}", "WARN")
-        current = self._forged_state() if self.byzantine else self.storage.load_state()
-        self._notify_observers(current, "ROLE_CHANGE")
+        self._log(f"Papel alterado para {self._role()}", "WARN")
+        self._notify_observers(self._visible_state(), "ROLE_CHANGE")
         return self.is_primary
 
     def get_state(self) -> dict:
-        state = self._forged_state() if self.byzantine else self.storage.load_state()
-        return {
-            **state.to_dict(),
-            "node_id": self.node_id,
-            "is_primary": self.is_primary,
-            "byzantine": self.byzantine,
-            "hash": state.canonical_hash(),
-        }
+        return self._state_snapshot(self._visible_state())
 
     def sync_state(self, state_dict: dict, command_id: str | None = None, kind: str = "SYNC", payload: str = "{}") -> bool:
         with self._lock:
@@ -264,7 +238,7 @@ class PetController:
             self.storage.save_state(state)
             if command_id:
                 self.storage.record_event(command_id, kind, payload)
-            emit_event(f"controller_{self.node_id}", f"Sync P2P aplicado ({kind})")
+            self._log(f"Sync P2P aplicado ({kind})")
             emit_event(f"storage_{self.node_id}", f"Sync replicado (hash {state.canonical_hash()})")
             self._notify_observers(state, f"SYNC_{kind}", command_id)
             return True
@@ -272,21 +246,13 @@ class PetController:
     def execute_command(self, action: str, command_id: str) -> dict:
         with self._lock:
             if self.byzantine:
-                emit_event(
-                    f"controller_{self.node_id}",
-                    f"Controlador {self.node_id} (BIZANTINO) adulterou comando {action}",
-                    "ERROR",
-                )
+                self._log(f"Controlador {self.node_id} (BIZANTINO) adulterou comando {action}", "ERROR")
                 return {"ok": False, "error": "BYZANTINE_FAULT"}
             if not self.is_primary:
                 return {"ok": False, "error": "NOT_PRIMARY"}
             if self.storage.has_event(command_id):
                 current = self.storage.load_state()
-                emit_event(
-                    f"controller_{self.node_id}",
-                    f"Idempotencia: comando {command_id[:8]} ({action}) ja registrado; ignorado",
-                    "WARN",
-                )
+                self._log(f"Idempotencia: comando {command_id[:8]} ({action}) ja registrado; ignorado", "WARN")
                 return {"ok": True, "idempotent": True, "state": current.to_dict()}
 
             current = self.storage.load_state()
@@ -294,7 +260,7 @@ class PetController:
             payload_str = json.dumps({"acao": action})
             self.storage.save_state(nxt)
             self.storage.record_event(command_id, action, payload_str)
-            emit_event(f"controller_{self.node_id}", f"Comando {action} executado ({command_id[:8]})")
+            self._log(f"Comando {action} executado ({command_id[:8]})")
             emit_event(f"storage_{self.node_id}", f"Estado salvo (hash {nxt.canonical_hash()})")
             self._publish_actuators(actuators, command_id)
             self._replicate_to_peers(nxt, command_id, action, payload_str)

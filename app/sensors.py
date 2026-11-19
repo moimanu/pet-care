@@ -6,10 +6,8 @@ import time
 
 import paho.mqtt.client as mqtt
 
+from app.config import MQTT_HOST, MQTT_PORT
 from app.event_bus import emit_event
-
-MQTT_HOST = "localhost"
-MQTT_PORT = 1883
 
 
 class IoTDeviceNode:
@@ -82,11 +80,15 @@ class IoTDeviceNode:
         elif kind == "telemetry":
             sensor = data["sensor"]
             payload = data["payload"]
-            topic = f"petcare/sensores/{sensor}"
-            self.client.publish(topic, json.dumps(payload), qos=1)
+            topic = self._publish_telemetry(sensor, payload)
             emit_event("sensors", f"Telemetria publicada em {topic}: {payload}")
             emit_event("mqtt", f"PUB {topic} -> {payload}")
             self._sync_local_reading(sensor, payload)
+
+    def _publish_telemetry(self, sensor: str, payload: dict) -> str:
+        topic = f"petcare/sensores/{sensor}"
+        self.client.publish(topic, json.dumps(payload), qos=1)
+        return topic
 
     def _sync_local_reading(self, sensor: str, payload: dict) -> None:
         try:
@@ -108,8 +110,7 @@ class IoTDeviceNode:
             ("racao", {"nivel_gramas": self.racao}),
             ("agua", {"nivel_ml": self.agua}),
         ):
-            topic = f"petcare/sensores/{sensor}"
-            self.client.publish(topic, json.dumps(payload), qos=1)
+            topic = self._publish_telemetry(sensor, payload)
             emit_event("sensors", f"[AUTO] {topic}: {payload}")
             emit_event("mqtt", f"PUB {topic} -> {payload}")
 
