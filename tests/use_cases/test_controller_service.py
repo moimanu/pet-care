@@ -1,7 +1,8 @@
 from typing import Any, Callable, Optional
 import pytest
 
-from src.domain.entities import PetState
+from src.domain.entities import Command, PetState
+from src.domain.interfaces import ControllerNode
 from src.use_cases.controller_service import ControllerService
 
 
@@ -45,7 +46,7 @@ class MockBroker:
 def test_controller_handles_valid_telemetry_and_persists_state():
     repo = MockRepository()
     broker = MockBroker()
-    service = ControllerService(node_id=1, repository=repo, broker=broker)
+    service = ControllerService(node_id=1, repository=repo, broker=broker, is_primary=True)
 
     service.handle_telemetry("petcare/sensores/racao", {"nivel_gramas": 180.0, "timestamp": "2026-11-10T15:00:00Z"})
 
@@ -62,7 +63,7 @@ def test_controller_handles_valid_telemetry_and_persists_state():
 def test_controller_discards_invalid_telemetry_without_db_modification():
     repo = MockRepository()
     broker = MockBroker()
-    service = ControllerService(node_id=1, repository=repo, broker=broker)
+    service = ControllerService(node_id=1, repository=repo, broker=broker, is_primary=True)
 
     service.handle_telemetry("petcare/sensores/racao", {"nivel_gramas": 200.0, "timestamp": "2026-11-10T15:00:00Z"})
     saved_state = repo.get_state()
@@ -111,23 +112,103 @@ def test_primary_controller_triggers_autonomous_actuation():
     assert repo.get_state().alarme_ativo is True
 
 
-def test_secondary_replica_does_not_publish_actuation_to_broker():
-    repo = MockRepository()
-    broker = MockBroker()
-    service = ControllerService(node_id=2, repository=repo, broker=broker, is_primary=False)
+def test_secondary_replica_ignores_direct_mqtt_and_receives_canonical_state_from_leader():
+    repo1, repo2, repo3 = MockRepository(), MockRepository(), MockRepository()
+    broker1, broker2, broker3 = MockBroker(), MockBroker(), MockBroker()
 
-    service.handle_telemetry("petcare/sensores/racao", {"nivel_gramas": 20.0, "timestamp": "2026-11-10T15:00:00Z"})
-    service.handle_telemetry("petcare/sensores/agua", {"nivel_ml": 50.0, "timestamp": "2026-11-10T15:01:00Z"})
-    service.handle_telemetry("petcare/sensores/fuga", {"perimetro": "FORA", "timestamp": "2026-11-10T15:02:00Z"})
+    # Pre-populate node 2 with a drifted/stale state to verify canonical overwrite
+    repo2.save_state(PetState(racao_gramas=10.0, agua_ml=10.0, areia_usos=99))
 
-    # Broker must receive zero messages from secondary node
-    assert len(broker.published) == 0
-    # But local state is updated
-    state = repo.get_state()
-    assert state.racao_gramas == 20.0
-    assert state.agua_ml == 50.0
-    assert state.status_fuga == "FORA"
-    assert state.alarme_ativo is True
+    c1 = ControllerService(node_id=1, repository=repo1, broker=broker1, is_primary=True)
+    c2 = ControllerService(node_id=2, repository=repo2, broker=broker2, is_primary=False)
+    c3 = ControllerService(node_id=3, repository=repo3, broker=broker3, is_primary=False)
+
+    c1.peers = [c2, c3]
+    c2.peers = [c1, c3]
+    c3.peers = [c1, c2]
+
+    # Secondary replica receives MQTT message first -> must ignore direct write while leader is active
+    c2.handle_telemetry("petcare/sensores/racao", {"nivel_gramas": 20.0, "timestamp": "2026-11-10T15:00:00Z"})
+    assert len(broker2.published) == 0
+    assert repo2.get_state().racao_gramas == 10.0  # Unchanged prior to leader's sync_state
+
+    # Primary processes telemetry -> updates local DB, actuates, and replicates canonical snapshot via sync_state
+    c1.handle_telemetry("petcare/sensores/racao", {"nivel_gramas": 20.0, "timestamp": "2026-11-10T15:00:00Z"})
+    assert len(broker1.published) == 1
+    assert repo1.get_state() == repo2.get_state() == repo3.get_state()
+    assert repo2.get_state().racao_gramas == 20.0
+    assert repo2.get_state().areia_usos == 0  # Stale drift was overwritten by leader's canonical state!
+
+
+def test_primary_replicates_canonical_state_to_divergent_replicas_on_command():
+    repo1 = MockRepository(PetState(racao_gramas=100.0, agua_ml=300.0))
+    # Replica 2 has drifted state (e.g. missed an earlier update)
+    repo2 = MockRepository(PetState(racao_gramas=15.0, agua_ml=50.0))
+    repo3 = MockRepository(PetState(racao_gramas=100.0, agua_ml=300.0))
+
+    c1 = ControllerService(node_id=1, repository=repo1, broker=MockBroker(), is_primary=True)
+    c2 = ControllerService(node_id=2, repository=repo2, broker=MockBroker(), is_primary=False)
+    c3 = ControllerService(node_id=3, repository=repo3, broker=MockBroker(), is_primary=False)
+    c1.peers = [c2, c3]
+
+    cmd = Command(
+        command_id="cmd-food-50",
+        acao="LIBERAR_RACAO",
+        parametros={"quantidade_gramas": 50.0},
+        timestamp="2026-11-10T15:05:00Z",
+    )
+    res = c1.execute_command(cmd)
+    assert res.sucesso is True
+
+    # All storages must match the Leader's exact canonical state (150.0g, 300.0ml) and event_log
+    assert repo1.get_state().racao_gramas == 150.0
+    assert repo2.get_state() == repo1.get_state()
+    assert repo3.get_state() == repo1.get_state()
+    assert repo2.has_event("cmd-food-50")
+    assert repo3.has_event("cmd-food-50")
+
+
+def test_proactive_p2p_failover_on_leader_crash_stop_and_telemetry():
+    repo1, repo2, repo3 = MockRepository(), MockRepository(), MockRepository()
+    broker1, broker2, broker3 = MockBroker(), MockBroker(), MockBroker()
+
+    c1 = ControllerService(node_id=1, repository=repo1, broker=broker1, is_primary=True)
+    c2 = ControllerService(node_id=2, repository=repo2, broker=broker2, is_primary=False)
+    c3 = ControllerService(node_id=3, repository=repo3, broker=broker3, is_primary=False)
+    c1.peers = [c2, c3]
+    c2.peers = [c1, c3]
+    c3.peers = [c1, c2]
+
+    # Simulate crash-stop on Primary (Node 1)
+    c1.set_offline(True)
+    assert c1.is_primary() is False
+    assert c2.is_primary() is True
+    assert c3.is_primary() is False
+
+    # Now Node 2 processes telemetry as the new Leader and replicates state to Node 3
+    c2.handle_telemetry("petcare/sensores/agua", {"nivel_ml": 100.0, "timestamp": "2026-11-10T15:10:00Z"})
+    assert len(broker2.published) == 1
+    assert repo2.get_state().agua_ml == 100.0
+    assert repo3.get_state() == repo2.get_state()
+
+
+def test_byzantine_corruption_on_leader_isolated_and_transfers_leadership():
+    initial = PetState(racao_gramas=200.0, agua_ml=400.0, status_fuga="DENTRO", alarme_ativo=False)
+    repo1, repo2, repo3 = MockRepository(initial), MockRepository(initial), MockRepository(initial)
+
+    c1 = ControllerService(node_id=1, repository=repo1, broker=MockBroker(), is_primary=True)
+    c2 = ControllerService(node_id=2, repository=repo2, broker=MockBroker(), is_primary=False)
+    c3 = ControllerService(node_id=3, repository=repo3, broker=MockBroker(), is_primary=False)
+    c1.peers = [c2, c3]
+    c2.peers = [c1, c3]
+    c3.peers = [c1, c2]
+
+    # Corrupting Node 1 (Leader) must automatically demote it and promote Node 2
+    c1.set_corrupt(True)
+    assert c1.is_primary() is False
+    assert c2.is_primary() is True
+    assert c2.get_state().status_fuga == "DENTRO"
+    assert c3.get_state().status_fuga == "DENTRO"
 
 
 def test_controller_executes_command_idempotently():
@@ -135,7 +216,6 @@ def test_controller_executes_command_idempotently():
     broker = MockBroker()
     service = ControllerService(node_id=1, repository=repo, broker=broker, is_primary=True)
 
-    # Initial state
     initial_state = PetState(
         racao_gramas=100.0,
         agua_ml=200.0,
@@ -146,7 +226,6 @@ def test_controller_executes_command_idempotently():
     )
     repo.save_state(initial_state)
 
-    from src.domain.entities import Command
     cmd_silenciar = Command(
         command_id="cmd-uuid-1",
         acao="SILENCIAR_ALARME",
@@ -176,9 +255,6 @@ def test_controller_sync_boot_state_from_peers_when_local_empty():
 
         def get_state(self) -> PetState:
             return self._state
-
-        def execute_command(self, cmd):
-            pass
 
         def is_primary(self):
             return False
@@ -214,16 +290,11 @@ def test_controller_yields_leadership_on_boot_if_peer_already_primary():
 
     peer = PrimaryPeerMock()
     service.sync_boot_state([peer])
-    # Must yield leadership because an active primary already exists
     assert service.is_primary() is False
 
 
 def test_controller_service_implements_controller_node():
-    from src.domain.interfaces import ControllerNode
     repo = MockRepository()
     broker = MockBroker()
     service = ControllerService(node_id=1, repository=repo, broker=broker)
     assert isinstance(service, ControllerNode)
-
-
-

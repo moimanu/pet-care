@@ -47,6 +47,15 @@ class ControllerNode(Protocol):
     def execute_command(self, command: Command) -> CommandResult:
         ...
 
+    def sync_state(
+        self,
+        state: PetState,
+        command_id: Optional[str] = None,
+        tipo_evento: str = "",
+        payload: str = "",
+    ) -> bool:
+        ...
+
     def is_primary(self) -> bool:
         ...
 

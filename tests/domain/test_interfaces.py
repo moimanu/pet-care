@@ -58,6 +58,16 @@ class DummyControllerNode:
     def execute_command(self, command: Command) -> CommandResult:
         return CommandResult(sucesso=True, mensagem="ok", estado=self._state)
 
+    def sync_state(
+        self,
+        state: PetState,
+        command_id: Optional[str] = None,
+        tipo_evento: str = "",
+        payload: str = "",
+    ) -> bool:
+        self._state = state
+        return True
+
     def is_primary(self) -> bool:
         return self._primary
 
