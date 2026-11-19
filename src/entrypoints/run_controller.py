@@ -40,20 +40,22 @@ def build_controller(
     else:
         broker = broker_client
 
+    peers_list = list(peer_proxies) if peer_proxies else []
     controller = ControllerService(
         node_id=node_id,
         repository=repo,
         broker=broker,
         is_primary=is_primary,
         is_corrupt=is_corrupt,
+        peers=peers_list,
     )
 
     # Subscribe to edge telemetry
     broker.subscribe("petcare/sensores/#", controller.handle_telemetry, qos=1)
 
     # Boot sync from peers
-    if peer_proxies:
-        controller.sync_boot_state(peer_proxies)
+    if peers_list:
+        controller.sync_boot_state(peers_list)
 
     return controller
 

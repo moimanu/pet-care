@@ -1,11 +1,13 @@
 import tempfile
-import pytest
+import threading
+import time
+import Pyro5.api
 
+from src.adapters.pyro_gateway import PyroControllerNodeProxy, PyroControllerNodeWrapper
 from src.domain.entities import PetState
 from src.entrypoints.run_controller import build_controller
-from src.entrypoints.run_middleware import PyroMiddlewareWrapper, build_middleware
+from src.use_cases.cluster_client_service import ClusterClientService
 from src.use_cases.controller_service import ControllerService
-from src.use_cases.middleware_service import MiddlewareService
 
 
 class DummyBroker:
@@ -38,6 +40,10 @@ class DummyNode:
         from src.domain.entities import CommandResult
         return CommandResult(sucesso=True, mensagem="ok", estado=self._state)
 
+    def sync_state(self, state, command_id=None, tipo_evento="", payload=""):
+        self._state = state
+        return True
+
     def is_primary(self):
         return self._primary
 
@@ -63,35 +69,48 @@ def test_build_controller_initializes_service_and_subscribes():
         assert broker.subs[0][0] == "petcare/sensores/#"
 
 
-def test_build_middleware_and_wrapper():
+def test_cluster_client_service_status_and_commands():
     node1 = DummyNode(primary=True)
     node2 = DummyNode(primary=False)
     node3 = DummyNode(primary=False)
 
-    middleware = build_middleware({1: node1, 2: node2, 3: node3})
-    assert isinstance(middleware, MiddlewareService)
-
-    wrapper = PyroMiddlewareWrapper(middleware)
-    status_res = wrapper.get_pet_status()
+    client = ClusterClientService({1: node1, 2: node2, 3: node3})
+    status_res = client.get_pet_status()
     assert status_res["sucesso"] is True
     status = status_res["estado"]
     assert status["racao_gramas"] == 100.0
     assert status["status_fuga"] == "DENTRO"
 
+    res = client.dispensar_racao(50.0)
+    assert res.sucesso is True
 
-    res = wrapper.dispensar_racao(50.0)
-    assert res["sucesso"] is True
 
+def test_full_real_decentralized_pyro_pipeline(tmp_path):
+    p1 = PyroControllerNodeProxy("PYRO:c1@localhost:19881")
+    p2 = PyroControllerNodeProxy("PYRO:c2@localhost:19882")
+    p3 = PyroControllerNodeProxy("PYRO:c3@localhost:19883")
 
-def test_full_real_pyro_pipeline(tmp_path):
-    import threading
-    import time
-    import Pyro5.api
-    from src.adapters.pyro_gateway import PyroControllerNodeWrapper, PyroControllerNodeProxy
-
-    c1 = build_controller(1, is_primary=True, db_path=str(tmp_path / "n1.db"), broker_client=DummyBroker())
-    c2 = build_controller(2, is_primary=False, db_path=str(tmp_path / "n2.db"), broker_client=DummyBroker())
-    c3 = build_controller(3, is_primary=False, db_path=str(tmp_path / "n3.db"), broker_client=DummyBroker())
+    c1 = build_controller(
+        1,
+        is_primary=True,
+        db_path=str(tmp_path / "n1.db"),
+        broker_client=DummyBroker(),
+        peer_proxies=[p2, p3],
+    )
+    c2 = build_controller(
+        2,
+        is_primary=False,
+        db_path=str(tmp_path / "n2.db"),
+        broker_client=DummyBroker(),
+        peer_proxies=[p1, p3],
+    )
+    c3 = build_controller(
+        3,
+        is_primary=False,
+        db_path=str(tmp_path / "n3.db"),
+        broker_client=DummyBroker(),
+        peer_proxies=[p1, p2],
+    )
 
     d1 = Pyro5.api.Daemon(port=19881)
     d1.register(PyroControllerNodeWrapper(c1), "c1")
@@ -105,22 +124,18 @@ def test_full_real_pyro_pipeline(tmp_path):
     threading.Thread(target=d3.requestLoop, daemon=True).start()
     time.sleep(0.1)
 
-    proxies = {
-        1: PyroControllerNodeProxy("PYRO:c1@localhost:19881"),
-        2: PyroControllerNodeProxy("PYRO:c2@localhost:19882"),
-        3: PyroControllerNodeProxy("PYRO:c3@localhost:19883"),
-    }
+    try:
+        client = ClusterClientService({1: p1, 2: p2, 3: p3})
+        status = client.get_pet_status()
+        assert status["sucesso"] is True
 
-    middleware = build_middleware(proxies)
-    d_mid = Pyro5.api.Daemon(port=19880)
-    d_mid.register(PyroMiddlewareWrapper(middleware), "mid")
-    threading.Thread(target=d_mid.requestLoop, daemon=True).start()
-    time.sleep(0.1)
-
-    client_proxy = Pyro5.api.Proxy("PYRO:mid@localhost:19880")
-    status = client_proxy.get_pet_status()
-    assert status["sucesso"] is True
-    res = client_proxy.dispensar_racao(50.0)
-    assert res["sucesso"] is True
-
-
+        # Execute command on Primary (c1); c1 replicates canonical state directly to c2 and c3 over Pyro5 P2P
+        res = client.dispensar_racao(50.0)
+        assert res.sucesso is True
+        assert c1.get_state().racao_gramas == 50.0
+        assert c2.get_state().racao_gramas == 50.0
+        assert c3.get_state().racao_gramas == 50.0
+    finally:
+        d1.close()
+        d2.close()
+        d3.close()

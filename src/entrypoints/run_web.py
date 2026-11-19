@@ -15,8 +15,10 @@ if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
 from src.adapters.mqtt_client import MqttClient
-from src.adapters.pyro_gateway import PyroMiddlewareProxy
+from src.adapters.pyro_gateway import PyroControllerNodeProxy
 from src.adapters.web_gateway import WebGateway, WebGatewayLogHandler
+from src.domain.interfaces import ControllerNode
+from src.use_cases.cluster_client_service import ClusterClientService
 
 logger = logging.getLogger(__name__)
 
@@ -57,13 +59,23 @@ def build_web_server(
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Servidor Web PetCare (HTTP/REST/SSE)")
+    parser = argparse.ArgumentParser(description="Servidor Web PetCare (Cliente RPC Descentralizado)")
     parser.add_argument("--host", default="0.0.0.0", help="Endereço de bind HTTP")
     parser.add_argument("--port", type=int, default=8080, help="Porta HTTP")
     parser.add_argument(
-        "--middleware",
-        default="PYRO:petcare.middleware@localhost:9090",
-        help="URI Pyro5 do Middleware",
+        "--node1",
+        default="PYRO:petcare.controller.1@localhost:9091",
+        help="URI Pyro5 do Controlador 1",
+    )
+    parser.add_argument(
+        "--node2",
+        default="PYRO:petcare.controller.2@localhost:9092",
+        help="URI Pyro5 do Controlador 2",
+    )
+    parser.add_argument(
+        "--node3",
+        default="PYRO:petcare.controller.3@localhost:9093",
+        help="URI Pyro5 do Controlador 3",
     )
     parser.add_argument("--static-dir", default="web", help="Diretório de assets estáticos")
     parser.add_argument("--logs-dir", default="logs", help="Diretório de logs a monitorar")
@@ -77,19 +89,29 @@ def main() -> None:
         format="%(asctime)s [%(levelname)s] (%(name)s) %(message)s",
     )
 
-    logger.info("Conectando proxy thread-safe ao Middleware Pyro5 em %s...", args.middleware)
-    proxy = PyroMiddlewareProxy(args.middleware)
+    logger.info(
+        "Conectando cliente diretamente aos Controladores Pyro5 (%s, %s, %s)...",
+        args.node1,
+        args.node2,
+        args.node3,
+    )
+    nodes: dict[int, ControllerNode] = {
+        1: PyroControllerNodeProxy(args.node1),
+        2: PyroControllerNodeProxy(args.node2),
+        3: PyroControllerNodeProxy(args.node3),
+    }
+    cluster_client = ClusterClientService(nodes=nodes)
 
     gateway = build_web_server(
         host=args.host,
         port=args.port,
-        middleware=proxy,
+        middleware=cluster_client,
         static_dir=args.static_dir,
         logs_dir=args.logs_dir,
     )
 
     # Attach SSE log streamer to root logger
-    sse_handler = WebGatewayLogHandler(gateway, component="WebGateway")
+    sse_handler = WebGatewayLogHandler(gateway, component="ClusterClient")
     logging.getLogger().addHandler(sse_handler)
 
     if not args.no_mqtt:
