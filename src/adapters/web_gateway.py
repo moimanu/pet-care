@@ -19,6 +19,11 @@ MIME_TYPES = {
     ".html": "text/html", ".css": "text/css", ".js": "application/javascript",
     ".json": "application/json", ".svg": "image/svg+xml", ".png": "image/png", ".ico": "image/x-icon",
 }
+CORS_HEADERS = (
+    ("Access-Control-Allow-Origin", "*"),
+    ("Access-Control-Allow-Headers", "Content-Type"),
+    ("Access-Control-Allow-Methods", "GET, POST, OPTIONS"),
+)
 
 
 class WebGatewayLogHandler(logging.Handler):
@@ -32,9 +37,8 @@ class WebGatewayLogHandler(logging.Handler):
         try:
             lvl = "WARN" if record.levelname == "WARNING" else record.levelname
             ts = datetime.fromtimestamp(record.created).astimezone().isoformat()
-            line = f"{ts} [{lvl}] ({self.component or record.name}) {record.getMessage()}"
-            entry = {"source": "web", "line": line}
-            if self.gateway.tailer is not None:
+            entry = {"source": "web", "line": f"{ts} [{lvl}] ({self.component or record.name}) {record.getMessage()}"}
+            if self.gateway.tailer:
                 self.gateway.tailer.record_entry(entry)
             self.gateway.broadcast("raw_log", entry)
         except Exception:
@@ -44,10 +48,7 @@ class WebGatewayLogHandler(logging.Handler):
 class LogFileTailer:
     """Continuously tails raw process log files (*.log) and streams lines over SSE."""
 
-    SOURCE_MAP = {
-        "controller_1": "node-1", "controller_2": "node-2", "controller_3": "node-3",
-        "iot_devices": "iot",
-    }
+    SOURCE_MAP = {"controller_1": "node-1", "controller_2": "node-2", "controller_3": "node-3", "iot_devices": "iot"}
 
     def __init__(
         self, gateway: WebGateway, logs_dir: str | Path = "logs",
@@ -80,39 +81,31 @@ class LogFileTailer:
         if not self.logs_dir.is_dir():
             return
         for log_file in sorted(self.logs_dir.glob("*.log")):
-            source_id, file_key = self.SOURCE_MAP.get(log_file.stem, log_file.stem), str(log_file)
-            if file_key not in self._offsets:
-                try:
-                    lines = log_file.read_text(encoding="utf-8", errors="replace").splitlines()
-                    self._emit_lines(source_id, lines[-self.initial_lines:])
-                except Exception:
-                    pass
-                try:
-                    self._offsets[file_key] = log_file.stat().st_size
-                except OSError:
-                    self._offsets[file_key] = 0
-                continue
+            source_id, key = self.SOURCE_MAP.get(log_file.stem, log_file.stem), str(log_file)
             try:
                 size = log_file.stat().st_size
-                offset = 0 if size < self._offsets[file_key] else self._offsets[file_key]
-                if size > offset:
+                if key not in self._offsets:
+                    lines = log_file.read_text(encoding="utf-8", errors="replace").splitlines()
+                    self._emit_lines(source_id, lines[-self.initial_lines:])
+                    self._offsets[key] = size
+                elif size > (offset := 0 if size < self._offsets[key] else self._offsets[key]):
                     with open(log_file, "r", encoding="utf-8", errors="replace") as f:
                         f.seek(offset)
                         self._emit_lines(source_id, f.read().splitlines())
-                        self._offsets[file_key] = f.tell()
-            except Exception as exc:
-                logger.debug("Falha ao ler arquivo de log %s: %s", log_file, exc)
-
-    def _loop(self) -> None:
-        while self._running:
-            self.poll_once()
-            time.sleep(self.poll_interval)
+                        self._offsets[key] = f.tell()
+            except Exception:
+                self._offsets.setdefault(key, 0)
 
     def start(self) -> None:
         if not self._running:
             self._running = True
             self._thread = threading.Thread(target=self._loop, daemon=True)
             self._thread.start()
+
+    def _loop(self) -> None:
+        while self._running:
+            self.poll_once()
+            time.sleep(self.poll_interval)
 
     def stop(self) -> None:
         self._running = False
@@ -129,52 +122,42 @@ class _GatewayHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
     def log_message(self, format: str, *args: Any) -> None:
         pass
 
-    def _send_cors_headers(self) -> None:
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type")
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-
     def _send_json(self, status_code: int, data: Mapping[str, Any]) -> None:
         body = json.dumps(data).encode("utf-8")
         self.send_response(status_code)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(body)))
-        self._send_cors_headers()
+        for k, v in (("Content-Type", "application/json"), ("Content-Length", str(len(body))), *CORS_HEADERS):
+            self.send_header(k, v)
         self.end_headers()
         self.wfile.write(body)
 
-    def _read_json_body(self) -> dict[str, Any]:
-        length = int(self.headers.get("Content-Length", 0))
-        if length <= 0:
+    def _read_json(self) -> dict[str, Any]:
+        if (length := int(self.headers.get("Content-Length", 0))) <= 0:
             return {}
         try:
             return json.loads(self.rfile.read(length).decode("utf-8"))
         except Exception:
             return {}
 
-    def _require_middleware(self) -> Optional[Any]:
+    def _with_mw(self, fn: Callable[[Any], Mapping[str, Any]], err_code: int = 500) -> None:
         if (mw := self.server.gateway.middleware) is None:
-            self._send_json(503, {"sucesso": False, "mensagem": "Middleware não conectado"})
-        return mw
-
-    def _run_mw(self, action: Callable[[Any], Mapping[str, Any]]) -> None:
-        if mw := self._require_middleware():
-            try:
-                self._send_json(200, action(mw))
-            except Exception as exc:
-                self._send_json(500, {"sucesso": False, "mensagem": str(exc)})
+            return self._send_json(503, {"sucesso": False, "mensagem": "Middleware não conectado"})
+        try:
+            self._send_json(200, fn(mw))
+        except Exception as exc:
+            self._send_json(err_code, {"sucesso": False, "mensagem": str(exc)})
 
     def do_OPTIONS(self) -> None:
         self.send_response(204)
-        self._send_cors_headers()
+        for k, v in CORS_HEADERS:
+            self.send_header(k, v)
         self.end_headers()
 
     def do_GET(self) -> None:
         path = self.path.split("?")[0]
         if path == "/api/status":
-            self._run_mw(lambda mw: mw.get_pet_status())
+            self._with_mw(lambda mw: mw.get_pet_status())
         elif path == "/api/nodes":
-            self._run_mw(lambda mw: {"sucesso": True, "nodes": mw.get_nodes_info() if hasattr(mw, "get_nodes_info") else []})
+            self._with_mw(lambda mw: {"sucesso": True, "nodes": getattr(mw, "get_nodes_info", lambda: [])()})
         elif path == "/api/events":
             self._handle_sse()
         else:
@@ -189,116 +172,88 @@ class _GatewayHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
             if len(parts) >= 2:
                 self._handle_node_action(parts[0], parts[1])
             else:
-                self._send_json(400, {"sucesso": False, "mensagem": f"Caminho de nó incompleto: {path}"})
+                self._send_json(400, {"sucesso": False, "mensagem": f"Caminho inválido: {path}"})
         else:
             self._send_json(404, {"sucesso": False, "mensagem": f"Rota não encontrada: {path}"})
 
     def _handle_node_action(self, node_id_str: str, action: str) -> None:
-        if not self._require_middleware():
-            return
         try:
             node_id = int(node_id_str)
         except ValueError:
-            return self._send_json(400, {"sucesso": False, "mensagem": f"ID de nó inválido: {node_id_str}"})
+            return self._send_json(400, {"sucesso": False, "mensagem": f"ID inválido: {node_id_str}"})
 
         actions = {"toggle_offline": ("offline", "set_node_offline"), "toggle_corrupt": ("corrupt", "set_node_corrupt")}
         if action not in actions:
-            return self._send_json(404, {"sucesso": False, "mensagem": f"Ação de nó desconhecida: {action}"})
+            return self._send_json(404, {"sucesso": False, "mensagem": f"Ação desconhecida: {action}"})
 
         field, method = actions[action]
-        def _toggle(mw: Any) -> Mapping[str, Any]:
-            current_val = next(
-                (n for n in (mw.get_nodes_info() if hasattr(mw, "get_nodes_info") else []) if n.get("id") == node_id),
-                {},
-            ).get(field, False)
-            new_val = not current_val
-            raw = getattr(mw, method)(node_id, new_val)
-            if isinstance(raw, Mapping):
-                return raw
-            return {"sucesso": bool(raw), "node_id": node_id, field: new_val}
 
-        self._run_mw(_toggle)
+        def _toggle(mw: Any) -> Mapping[str, Any]:
+            nodes = getattr(mw, "get_nodes_info", lambda: [])()
+            new_val = not next((n.get(field, False) for n in nodes if n.get("id") == node_id), False)
+            res = getattr(mw, method)(node_id, new_val)
+            return res if isinstance(res, Mapping) else {"sucesso": bool(res), "node_id": node_id, field: new_val}
+
+        self._with_mw(_toggle)
 
     def _handle_command(self, action: str) -> None:
-        if not (mw := self._require_middleware()):
-            return
-        body = self._read_json_body()
+        body = self._read_json()
         cid = body.get("command_id")
-        commands: dict[str, Callable[[], Any]] = {
-            "dispense_food": lambda: mw.dispensar_racao(float(body.get("quantidade", 50.0)), command_id=cid),
-            "refill_water": lambda: mw.repor_agua(float(body.get("quantidade", 200.0)), command_id=cid),
-            "clean_litter": lambda: mw.resetar_areia(command_id=cid),
-            "silence_alarm": lambda: mw.silenciar_alarme(command_id=cid),
+        cmds: dict[str, Callable[[Any], Any]] = {
+            "dispense_food": lambda mw: mw.dispensar_racao(float(body.get("quantidade", 50.0)), command_id=cid),
+            "refill_water": lambda mw: mw.repor_agua(float(body.get("quantidade", 200.0)), command_id=cid),
+            "clean_litter": lambda mw: mw.resetar_areia(command_id=cid),
+            "silence_alarm": lambda mw: mw.silenciar_alarme(command_id=cid),
         }
-        if action not in commands:
+        if action not in cmds:
             return self._send_json(404, {"sucesso": False, "mensagem": f"Comando desconhecido: {action}"})
 
-        try:
-            raw_res = commands[action]()
-            if is_dataclass(raw_res) and not isinstance(raw_res, type):
-                estado_obj = getattr(raw_res, "estado", None)
-                res: dict[str, Any] = {
-                    "sucesso": bool(getattr(raw_res, "sucesso", True)),
-                    "mensagem": str(getattr(raw_res, "mensagem", "")),
-                    "estado": asdict(estado_obj) if is_dataclass(estado_obj) else estado_obj,
-                }
+        def _exec(mw: Any) -> Mapping[str, Any]:
+            raw = cmds[action](mw)
+            if is_dataclass(raw) and not isinstance(raw, type):
+                st = getattr(raw, "estado", None)
+                res = {"sucesso": bool(raw.sucesso), "mensagem": str(raw.mensagem), "estado": asdict(st) if is_dataclass(st) else st}
             else:
-                res = dict(raw_res)
+                res = dict(raw)
             if res.get("sucesso") and res.get("estado"):
                 self.server.gateway.broadcast("state", res["estado"])
-            self._send_json(200, res)
-        except Exception as exc:
-            logger.warning("Falha na validação/execução do comando %s: %s", action, exc)
-            self._send_json(400, {"sucesso": False, "mensagem": str(exc)})
+            return res
+
+        self._with_mw(_exec, err_code=400)
 
     def _handle_sse(self) -> None:
-        gateway = self.server.gateway
-        client_queue = gateway.subscribe_sse()
-
+        gw = self.server.gateway
+        client_q = gw.subscribe_sse()
         self.send_response(200)
-        self.send_header("Content-Type", "text/event-stream")
-        self.send_header("Cache-Control", "no-cache")
-        self.send_header("Connection", "keep-alive")
-        self.send_header("Access-Control-Allow-Origin", "*")
+        for k, v in (("Content-Type", "text/event-stream"), ("Cache-Control", "no-cache"), ("Connection", "keep-alive"), ("Access-Control-Allow-Origin", "*")):
+            self.send_header(k, v)
         self.end_headers()
 
-        if gateway.middleware is not None:
-            try:
-                status_res = gateway.middleware.get_pet_status()
-                if status_res.get("sucesso") and status_res.get("estado"):
-                    self.wfile.write(f"event: state\ndata: {json.dumps(status_res['estado'])}\n\n".encode("utf-8"))
-                    self.wfile.flush()
-            except Exception as exc:
-                logger.debug("Falha ao enviar estado inicial SSE: %s", exc)
-
-        if gateway.tailer is not None:
-            try:
-                for entry in gateway.tailer.get_recent_history():
-                    self.wfile.write(f"event: raw_log\ndata: {json.dumps(entry)}\n\n".encode("utf-8"))
-                self.wfile.flush()
-            except Exception as exc:
-                logger.debug("Falha ao enviar historico inicial de logs SSE: %s", exc)
-
         try:
-            while gateway.is_running:
+            if gw.middleware and (st := gw.middleware.get_pet_status()).get("sucesso") and st.get("estado"):
+                self.wfile.write(f"event: state\ndata: {json.dumps(st['estado'])}\n\n".encode("utf-8"))
+            if gw.tailer:
+                for entry in gw.tailer.get_recent_history():
+                    self.wfile.write(f"event: raw_log\ndata: {json.dumps(entry)}\n\n".encode("utf-8"))
+            self.wfile.flush()
+
+            while gw.is_running:
                 try:
-                    self.wfile.write(client_queue.get(timeout=1.0).encode("utf-8"))
+                    self.wfile.write(client_q.get(timeout=1.0).encode("utf-8"))
                 except queue.Empty:
                     self.wfile.write(b": keep-alive\n\n")
                 self.wfile.flush()
-        except (BrokenPipeError, ConnectionResetError):
+        except Exception:
             pass
         finally:
-            gateway.unsubscribe_sse(client_queue)
+            gw.unsubscribe_sse(client_q)
 
     def _handle_static(self, req_path: str) -> None:
-        static_dir = self.server.gateway.static_dir
-        if not static_dir:
-            return self._send_json(404, {"sucesso": False, "mensagem": "Nenhum diretório estático configurado"})
+        if not (static_dir := self.server.gateway.static_dir):
+            return self._send_json(404, {"sucesso": False, "mensagem": "Diretório estático ausente"})
 
-        clean = req_path.lstrip("/") or "index.html"
         base_dir = Path(static_dir).resolve()
-        file_path = (base_dir / clean).resolve()
+        file_path = (base_dir / (req_path.lstrip("/") or "index.html")).resolve()
         if not str(file_path).startswith(str(base_dir)):
             return self._send_json(403, {"sucesso": False, "mensagem": "Acesso negado"})
         if not file_path.is_file():
@@ -307,9 +262,8 @@ class _GatewayHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
         try:
             content = file_path.read_bytes()
             self.send_response(200)
-            self.send_header("Content-Type", MIME_TYPES.get(file_path.suffix.lower(), "application/octet-stream"))
-            self.send_header("Content-Length", str(len(content)))
-            self.send_header("Cache-Control", "no-cache")
+            for k, v in (("Content-Type", MIME_TYPES.get(file_path.suffix.lower(), "application/octet-stream")), ("Content-Length", str(len(content))), ("Cache-Control", "no-cache")):
+                self.send_header(k, v)
             self.end_headers()
             self.wfile.write(content)
         except Exception as exc:
@@ -382,7 +336,6 @@ class WebGateway:
         self._thread.start()
         if self.tailer:
             self.tailer.start()
-        logger.info("WebGateway iniciado em http://%s:%d", self.host, self.port)
 
     def stop(self) -> None:
         if not self._is_running:
@@ -400,6 +353,3 @@ class WebGateway:
             self._thread = None
         with self._clients_lock:
             self._subscribers.clear()
-        logger.info("WebGateway encerrado")
-
-
