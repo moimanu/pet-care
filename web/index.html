@@ -1,319 +1,293 @@
 <!DOCTYPE html>
 <html lang="pt-BR">
-
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>PetCare - Painel de Controle</title>
-  <link rel="stylesheet" href="style.css">
-  <script src="https://unpkg.com/lucide@latest"></script>
+  <title>Pet Care — Fluxograma Interativo</title>
+  <link rel="stylesheet" href="/style.css">
 </head>
-
 <body>
-  <header>
+  <header class="topbar">
     <div class="brand">
-      <i data-lucide="shield-check" aria-hidden="true"></i>
-      <span>PETCARE</span>
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+        <rect x="3" y="3" width="7" height="7" rx="1"></rect>
+        <rect x="14" y="3" width="7" height="7" rx="1"></rect>
+        <rect x="3" y="14" width="7" height="7" rx="1"></rect>
+        <path d="M14 17h7m-3.5-3.5v7"></path>
+      </svg>
+      <h1>Pet Care Distribuido</h1>
+      <span class="subtitle">Fluxograma Interativo (Board Infinito)</span>
     </div>
-    <div class="header-meta">
-      <button id="btn-toggle-pause" class="btn btn-sm" aria-label="Pausar ou retomar atualizacoes"
-        title="Pausar ou retomar">
-        <i data-lucide="pause" aria-hidden="true"></i>
-        <span id="label-pause-btn">Pausar</span>
-      </button>
-      <div class="conn-indicator">
-        <span id="conn-dot" class="conn-dot offline"></span>
-        <span id="conn-text">Conectando SSE...</span>
-      </div>
-      <span id="last-sync-time">Ultima sincronizacao: --:--:--</span>
+    <div class="topbar-right">
+      <span class="hint">Arraste o fundo para mover | Scroll para zoom | Arraste cabecalhos para reposicionar</span>
+      <span id="conn-badge" class="badge badge-idle">CONECTANDO</span>
     </div>
   </header>
 
-  <main class="dashboard-grid">
-    <!-- MODULO 1: PAINEL DO TUTOR -->
-    <section class="col-panel mobile-tutor-panel" id="module-tutor" aria-labelledby="tutor-title">
-      <div class="mobile-device-bar">
-        <span>09:41</span>
-        <div class="mobile-speaker-pill"></div>
-        <div class="mobile-bar-icons">
-          <i data-lucide="wifi" aria-hidden="true"></i>
-          <i data-lucide="battery" aria-hidden="true"></i>
-        </div>
-      </div>
-      <div class="panel-header">
-        <div class="panel-title" id="tutor-title">
-          <i data-lucide="smartphone" aria-hidden="true"></i>
-          <span>App Tutor Mobile</span>
-        </div>
-        <span class="badge badge-neutral" id="tutor-badge">Online</span>
+  <div id="board-viewport" class="board-viewport">
+    <div id="board-stage" class="board-stage">
+      <div id="middleware-zone" class="middleware-zone">
+        <span class="zone-label">Middleware</span>
       </div>
 
-      <div class="panel-content">
-        <!-- Feedback alert -->
-        <div id="action-feedback" class="feedback-box"></div>
+      <svg id="flow-edges" class="flow-edges" width="3600" height="1800" aria-hidden="true">
+        <defs>
+          <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+            <path d="M 0 1 L 10 5 L 0 9 z" fill="#475569"></path>
+          </marker>
+        </defs>
+      </svg>
 
-        <!-- Telemetria do Pet -->
-        <div class="card">
-          <div class="card-title">
-            <span>Telemetria Consolidada</span>
-            <i data-lucide="activity" aria-hidden="true"></i>
+      <!-- 1. CLIENTES -->
+      <section class="node" id="node-clients" data-x="60" data-y="340" style="width: 360px;">
+        <div class="node-head">
+          <div class="node-title">
+            <span class="layer-tag">01</span>
+            <div>
+              <h2>Clientes</h2>
+              <p class="node-desc">App Tutor / Chamadas Pyro5 RPC e Quorum (2f+1)</p>
+            </div>
           </div>
-          <div class="metric-grid">
-            <div class="metric-item">
-              <div class="metric-label">
-                <i data-lucide="utensils" aria-hidden="true"></i>
-                <span>Racao</span>
-              </div>
-              <div class="metric-value"><span id="val-food">0.0</span><span class="metric-unit">g</span></div>
+          <span id="status-clients" class="badge badge-idle">INATIVO</span>
+        </div>
+        <div class="metrics">
+          <div class="metric"><span>Racao</span><strong id="m-racao">--</strong></div>
+          <div class="metric"><span>Agua</span><strong id="m-agua">--</strong></div>
+          <div class="metric"><span>Areia</span><strong id="m-areia">--</strong></div>
+          <div class="metric"><span>Perimetro</span><strong id="m-fuga">--</strong></div>
+          <div class="metric"><span>Alarme</span><strong id="m-alarme">--</strong></div>
+          <div class="metric"><span>Hash</span><strong id="m-hash">--</strong></div>
+        </div>
+        <div class="actions">
+          <div class="inline-group">
+            <input id="cmd-id-input" type="text" placeholder="command_id (UUID opcional)" aria-label="Command ID">
+            <button class="btn" data-op="new_uuid">Novo UUID</button>
+          </div>
+          <div class="btn-row">
+            <button class="btn" data-op="client_command" data-action="LIBERAR_RACAO">Liberar Racao</button>
+            <button class="btn" data-op="client_command" data-action="REPOR_AGUA">Repor Agua</button>
+            <button class="btn" data-op="client_command" data-action="RESETAR_AREIA">Resetar Areia</button>
+            <button class="btn" data-op="client_command" data-action="SILENCIAR_ALARME">Silenciar Alarme</button>
+          </div>
+          <div class="btn-row">
+            <button class="btn" data-op="rpc_read">Ler Estado (Quorum)</button>
+            <button class="btn" data-op="rpc_quorum">Verificar Quorum (2f+1)</button>
+            <span class="meta-text">Votos: <strong id="rpc-votes">--</strong></span>
+          </div>
+        </div>
+        <div class="logs" id="logs-clients"></div>
+      </section>
+
+      <!-- 2.1 CONTROLADORES (3 NOS DISTINTOS) -->
+      <article class="node" id="node-ctrl-1" data-x="620" data-y="50" style="width: 330px;">
+        <div class="node-head">
+          <div class="node-title">
+            <span class="layer-tag">C1</span>
+            <div>
+              <h2 id="title-ctrl-1">Controlador 1</h2>
+              <p class="node-desc">Pyro5 :9091 | Processo SO independente</p>
             </div>
-            <div class="metric-item">
-              <div class="metric-label">
-                <i data-lucide="droplet" aria-hidden="true"></i>
-                <span>Agua</span>
-              </div>
-              <div class="metric-value"><span id="val-water">0.0</span><span class="metric-unit">ml</span></div>
+          </div>
+          <span id="status-ctrl-1" class="badge badge-idle">INATIVO</span>
+        </div>
+        <div class="actions">
+          <div class="btn-row" id="actions-ctrl-1"></div>
+        </div>
+        <div class="logs" id="logs-ctrl-1"></div>
+      </article>
+
+      <article class="node" id="node-ctrl-2" data-x="620" data-y="390" style="width: 330px;">
+        <div class="node-head">
+          <div class="node-title">
+            <span class="layer-tag">C2</span>
+            <div>
+              <h2 id="title-ctrl-2">Controlador 2</h2>
+              <p class="node-desc">Pyro5 :9092 | Processo SO independente</p>
             </div>
-            <div class="metric-item">
-              <div class="metric-label">
-                <i data-lucide="box" aria-hidden="true"></i>
-                <span>Caixa Areia</span>
-              </div>
-              <div class="metric-value"><span id="val-litter">0</span><span class="metric-unit">usos</span></div>
+          </div>
+          <span id="status-ctrl-2" class="badge badge-idle">INATIVO</span>
+        </div>
+        <div class="actions">
+          <div class="btn-row" id="actions-ctrl-2"></div>
+        </div>
+        <div class="logs" id="logs-ctrl-2"></div>
+      </article>
+
+      <article class="node" id="node-ctrl-3" data-x="620" data-y="730" style="width: 330px;">
+        <div class="node-head">
+          <div class="node-title">
+            <span class="layer-tag">C3</span>
+            <div>
+              <h2 id="title-ctrl-3">Controlador 3</h2>
+              <p class="node-desc">Pyro5 :9093 | Processo SO independente</p>
             </div>
-            <div class="metric-item">
-              <div class="metric-label">
-                <i data-lucide="map-pin" aria-hidden="true"></i>
-                <span>Perimetro</span>
-              </div>
-              <div class="metric-value" style="font-size: 14px; padding-top: 4px;">
-                <span id="val-perimeter" class="badge badge-neutral">--</span>
-              </div>
+          </div>
+          <span id="status-ctrl-3" class="badge badge-idle">INATIVO</span>
+        </div>
+        <div class="actions">
+          <div class="btn-row" id="actions-ctrl-3"></div>
+        </div>
+        <div class="logs" id="logs-ctrl-3"></div>
+      </article>
+
+      <!-- 2.3 ARMAZENAMENTOS (3 BANCOS DISTINTOS) -->
+      <article class="node" id="node-db-1" data-x="1120" data-y="50" style="width: 330px;">
+        <div class="node-head">
+          <div class="node-title">
+            <span class="layer-tag">DB1</span>
+            <div>
+              <h2>Armazenamento 1</h2>
+              <p class="node-desc">SQLite node_1.db | Hash: <span id="hash-db-1">--</span></p>
+            </div>
+          </div>
+          <span id="status-db-1" class="badge badge-idle">--</span>
+        </div>
+        <div class="subcard-meta" id="meta-db-1">--</div>
+        <div class="actions">
+          <div class="inline-group">
+            <select id="field-db-1" aria-label="Campo DB 1">
+              <option value="racao_gramas">racao_gramas</option>
+              <option value="agua_ml">agua_ml</option>
+              <option value="areia_usos">areia_usos</option>
+              <option value="status_fuga">status_fuga</option>
+            </select>
+            <input id="val-db-1" type="text" value="999" aria-label="Valor DB 1">
+            <button class="btn" data-op="storage_mutate" data-node="1">Alterar</button>
+          </div>
+        </div>
+        <div class="logs" id="logs-db-1"></div>
+      </article>
+
+      <article class="node" id="node-db-2" data-x="1120" data-y="390" style="width: 330px;">
+        <div class="node-head">
+          <div class="node-title">
+            <span class="layer-tag">DB2</span>
+            <div>
+              <h2>Armazenamento 2</h2>
+              <p class="node-desc">SQLite node_2.db | Hash: <span id="hash-db-2">--</span></p>
+            </div>
+          </div>
+          <span id="status-db-2" class="badge badge-idle">--</span>
+        </div>
+        <div class="subcard-meta" id="meta-db-2">--</div>
+        <div class="actions">
+          <div class="inline-group">
+            <select id="field-db-2" aria-label="Campo DB 2">
+              <option value="racao_gramas">racao_gramas</option>
+              <option value="agua_ml">agua_ml</option>
+              <option value="areia_usos">areia_usos</option>
+              <option value="status_fuga">status_fuga</option>
+            </select>
+            <input id="val-db-2" type="text" value="999" aria-label="Valor DB 2">
+            <button class="btn" data-op="storage_mutate" data-node="2">Alterar</button>
+          </div>
+        </div>
+        <div class="logs" id="logs-db-2"></div>
+      </article>
+
+      <article class="node" id="node-db-3" data-x="1120" data-y="730" style="width: 330px;">
+        <div class="node-head">
+          <div class="node-title">
+            <span class="layer-tag">DB3</span>
+            <div>
+              <h2>Armazenamento 3</h2>
+              <p class="node-desc">SQLite node_3.db | Hash: <span id="hash-db-3">--</span></p>
+            </div>
+          </div>
+          <span id="status-db-3" class="badge badge-idle">--</span>
+        </div>
+        <div class="subcard-meta" id="meta-db-3">--</div>
+        <div class="actions">
+          <div class="inline-group">
+            <select id="field-db-3" aria-label="Campo DB 3">
+              <option value="racao_gramas">racao_gramas</option>
+              <option value="agua_ml">agua_ml</option>
+              <option value="areia_usos">areia_usos</option>
+              <option value="status_fuga">status_fuga</option>
+            </select>
+            <input id="val-db-3" type="text" value="999" aria-label="Valor DB 3">
+            <button class="btn" data-op="storage_mutate" data-node="3">Alterar</button>
+          </div>
+        </div>
+        <div class="logs" id="logs-db-3"></div>
+      </article>
+
+      <!-- 3. MQTT -->
+      <section class="node" id="node-mqtt" data-x="1640" data-y="380" style="width: 330px;">
+        <div class="node-head">
+          <div class="node-title">
+            <span class="layer-tag">03</span>
+            <div>
+              <h2>MQTT</h2>
+              <p class="node-desc">Broker Mosquitto (:1883) Pub/Sub</p>
+            </div>
+          </div>
+          <span id="status-mqtt" class="badge badge-idle">INATIVO</span>
+        </div>
+        <div class="actions">
+          <div class="inline-group">
+            <input id="mqtt-topic" type="text" value="petcare/sensores/racao" aria-label="Topico MQTT">
+          </div>
+          <div class="inline-group">
+            <input id="mqtt-payload" type="text" value='{"nivel_gramas": 30}' aria-label="Payload JSON">
+            <button class="btn" data-op="mqtt_publish">Publicar</button>
+          </div>
+        </div>
+        <div class="logs" id="logs-mqtt"></div>
+      </section>
+
+      <!-- 4. SENSORES -->
+      <section class="node" id="node-sensors" data-x="2140" data-y="330" style="width: 360px;">
+        <div class="node-head">
+          <div class="node-title">
+            <span class="layer-tag">04</span>
+            <div>
+              <h2>Sensores</h2>
+              <p class="node-desc">Dispositivos de borda e atuadores IoT</p>
+            </div>
+          </div>
+          <span id="status-sensors" class="badge badge-idle">INATIVO</span>
+        </div>
+        <div class="actions">
+          <div class="btn-row">
+            <button class="btn" data-op="sensor_toggle_proc">Iniciar / Parar</button>
+            <button class="btn" data-op="sensor_auto" data-enabled="true">Auto ON</button>
+            <button class="btn" data-op="sensor_auto" data-enabled="false">Auto OFF</button>
+          </div>
+          <div class="sensor-grid">
+            <div class="inline-group">
+              <input id="inp-racao" type="number" step="1" value="30" aria-label="Racao em gramas">
+              <button class="btn" data-op="sensor_publish" data-sensor="racao">Racao (g)</button>
+            </div>
+            <div class="inline-group">
+              <input id="inp-agua" type="number" step="1" value="100" aria-label="Agua em ml">
+              <button class="btn" data-op="sensor_publish" data-sensor="agua">Agua (ml)</button>
+            </div>
+            <div class="inline-group">
+              <input id="inp-areia" type="number" step="1" value="3" aria-label="Usos areia">
+              <button class="btn" data-op="sensor_publish" data-sensor="areia">Areia</button>
+            </div>
+            <div class="inline-group">
+              <select id="inp-fuga" aria-label="Perimetro">
+                <option value="FORA">FORA</option>
+                <option value="DENTRO">DENTRO</option>
+              </select>
+              <button class="btn" data-op="sensor_publish" data-sensor="fuga">Fuga</button>
             </div>
           </div>
         </div>
+        <div class="logs" id="logs-sensors"></div>
+      </section>
+    </div>
 
-        <!-- Estado do Alarme -->
-        <div class="card">
-          <div class="card-title">
-            <span>Seguranca e Perimetro</span>
-            <i data-lucide="bell" aria-hidden="true"></i>
-          </div>
-          <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;">
-            <span style="font-size: 11px; color: var(--muted);">Sirene de Fuga</span>
-            <span id="val-alarm" class="badge badge-neutral">DESARMADO</span>
-          </div>
-          <button id="btn-silence" class="btn btn-danger" style="width: 100%;"
-            aria-label="Silenciar ou desarmar alarme">
-            <i data-lucide="volume-x" aria-hidden="true"></i>
-            <span>Silenciar / Desarmar Alarme</span>
-          </button>
-        </div>
+    <div class="board-hud">
+      <button class="btn btn-sm" id="btn-zoom-out" title="Diminuir zoom" aria-label="Diminuir zoom">-</button>
+      <span id="zoom-label" class="zoom-label">100%</span>
+      <button class="btn btn-sm" id="btn-zoom-in" title="Aumentar zoom" aria-label="Aumentar zoom">+</button>
+      <button class="btn btn-sm" id="btn-fit" title="Ajustar fluxograma na tela">Ajustar</button>
+    </div>
+  </div>
 
-        <!-- Acoes Rapidas -->
-        <div class="card">
-          <div class="card-title">
-            <span>Acoes de Alimentacao</span>
-            <i data-lucide="sliders" aria-hidden="true"></i>
-          </div>
-          <div class="action-group">
-            <div class="input-row">
-              <input type="number" id="input-food-qty" class="input-text" value="50" min="1" step="5"
-                placeholder="Gramas">
-              <button id="btn-dispense" class="btn btn-primary" aria-label="Dispensar racao" title="Dispensar racao">
-                <i data-lucide="plus" aria-hidden="true"></i>
-              </button>
-            </div>
-            <div class="input-row">
-              <input type="number" id="input-water-qty" class="input-text" value="200" min="1" step="10"
-                placeholder="Mililitros">
-              <button id="btn-water" class="btn btn-primary" aria-label="Repor agua" title="Repor agua">
-                <i data-lucide="plus" aria-hidden="true"></i>
-              </button>
-            </div>
-            <button id="btn-clean-litter" class="btn" style="width: 100%;"
-              aria-label="Registrar limpeza da caixa de areia">
-              <i data-lucide="rotate-ccw" aria-hidden="true"></i>
-              <span>Zerar Caixa de Areia</span>
-            </button>
-          </div>
-        </div>
-      </div>
-    </section>
-
-    <!-- MODULO 2: PROCESSOS & ENDPOINTS -->
-    <section class="col-panel" id="module-processes" aria-labelledby="processes-title">
-      <div class="panel-header">
-        <div class="panel-title" id="processes-title">
-          <i data-lucide="terminal" aria-hidden="true"></i>
-          <span>Logs & Observabilidade</span>
-        </div>
-      </div>
-
-      <div class="panel-content">
-        <!-- Terminal Unificado de Processos -->
-        <div class="card">
-          <div class="terminal-header-bar">
-            <!-- Abas de Filtro de Processo -->
-            <div class="terminal-tabs" role="tablist" aria-label="Filtrar logs por processo">
-              <button class="term-tab active" data-tab="all" role="tab" aria-selected="true">Todos</button>
-              <button class="term-tab" data-tab="node-1" role="tab" aria-selected="false">Controlador 1</button>
-              <button class="term-tab" data-tab="node-2" role="tab" aria-selected="false">Controlador 2</button>
-              <button class="term-tab" data-tab="node-3" role="tab" aria-selected="false">Controlador 3</button>
-              <button class="term-tab" data-tab="web" role="tab" aria-selected="false">Cliente RPC</button>
-              <button class="term-tab" data-tab="iot" role="tab" aria-selected="false">IoT Edge</button>
-              <button class="term-tab" data-tab="broker" role="tab" aria-selected="false">Broker MQTT</button>
-            </div>
-
-
-          </div>
-
-          <!-- Janela do Terminal Monospace -->
-          <div class="unified-terminal" id="unified-terminal" role="log" aria-live="polite">
-            <div class="raw-line" data-src="system">
-              <span class="raw-tag tag-generic">[Sistema]</span>
-              <span class="raw-text">Aguardando stream de logs brutos via SSE...</span>
-            </div>
-          </div>
-
-          <!-- Toolbar de Acoes -->
-          <div class="terminal-toolbar">
-            <span id="term-line-count">0 eventos</span>
-            <div class="terminal-actions">
-              <button id="btn-autoscroll" class="btn btn-xs active" aria-label="Alternar rolagem automatica"
-                title="Auto-scroll ativo">
-                <i data-lucide="arrow-down" aria-hidden="true"></i>
-              </button>
-              <button id="btn-clear-term" class="btn btn-xs" aria-label="Limpar console" title="Limpar console">
-                <i data-lucide="trash-2" aria-hidden="true"></i>
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>
-    </section>
-
-    <!-- MODULO 3: GUIA DE TESTES, CONTROLADORES & SWAGGER API -->
-    <section class="col-panel" id="module-swagger" aria-labelledby="swagger-title">
-      <div class="panel-header">
-        <div class="panel-title" id="swagger-title">
-          <i data-lucide="book-open" aria-hidden="true"></i>
-          <span>Testes, Topologia & API</span>
-        </div>
-      </div>
-
-      <div class="panel-content">
-        <div class="terminal-header-bar">
-          <div class="terminal-tabs" role="tablist"
-            aria-label="Alternar entre guia de testes, controladores e Swagger UI">
-            <button class="term-tab active" data-col3-tab="guide" id="tab-col3-guide" role="tab"
-              aria-selected="true">Guia de Testes</button>
-            <button class="term-tab" data-col3-tab="nodes" id="tab-col3-nodes" role="tab"
-              aria-selected="false">Controladores</button>
-            <button class="term-tab" data-col3-tab="swagger" id="tab-col3-swagger" role="tab"
-              aria-selected="false">Swagger API</button>
-          </div>
-        </div>
-
-        <!-- Aba 1: Guia de Testes dos Cenarios -->
-        <article class="col3-tab-pane markdown-doc" id="panel-col3-guide">
-          <section>
-            <h4>1. Tolerância a Falhas Bizantinas (2f + 1)</h4>
-            <p>Simula um controlador fornecendo respostas falsificadas (ataque ou erro intermitente) sem contaminar os armazenamentos das réplicas honestas.</p>
-            <ul>
-              <li><strong>Ação na Interface:</strong> na aba <strong>Controladores</strong>, no nó <strong>Controlador
-                  3</strong> (réplica) ou no <strong>Controlador 1</strong> (líder), clique em <code>Corromper</code>.</li>
-              <li><strong>Endpoint:</strong> <code>GET /api/status</code> (ou aguarde a leitura periódica do painel)</li>
-              <li><strong>Log no Terminal (Réplica Corrompida):</strong>
-                <pre><code>[ERROR] (ClusterClient) [SEGURANCA] Falha Bizantina detectada no No 3. Resposta descartada.</code></pre>
-              </li>
-              <li><strong>Log no Terminal (Líder Corrompido — Destituição P2P):</strong>
-                <pre><code>[WARN] (Controller-Node1) [SEGURANCA] Lider No 1 entrou em estado bizantino. Destituindo lideranca e promovendo replica integra.</code></pre>
-              </li>
-            </ul>
-          </section>
-
-          <section>
-            <h4>2. Failover Crash-Stop e Sincronização de Estado Canônico</h4>
-            <p>Simula queda abrupta do líder com eleição P2P imediata e replicação do estado canônico (<code>sync_state</code>) para manter todos os armazenamentos iguais ao líder ativo.</p>
-            <ul>
-              <li><strong>Ação na Interface:</strong> na aba <strong>Controladores</strong>, no nó <strong>Controlador 1
-                  (Líder)</strong>, clique em <code>Derrubar</code> (o <strong>Controlador 2</strong> assume a liderança via P2P imediatamente).</li>
-              <li>
-                <div class="code-header">
-                  <strong>Endpoint & Payload:</strong>
-                  <button class="btn btn-xs btn-copy-preset" data-preset="failover"
-                    title="Copiar requisição">Copiar</button>
-                </div>
-                <pre id="code-preset-failover"><code>POST /api/command/dispense_food
-{"quantidade": 50.0}</code></pre>
-              </li>
-              <li><strong>Logs no Terminal:</strong>
-                <pre><code>[WARN] (Controller-Node1) Lider No 1 entrou em crash-stop. Acionando failover P2P para replica saudavel.
-[INFO] (Controller-Node2) No 2 assumiu a lideranca primaria do cluster.
-[INFO] (ClusterClient) Metodo RPC LIBERAR_RACAO invocado com sucesso no Lider No 2 (command_id=...)
-[INFO] (Controller-Node3) No 3 sincronizou estado canonico do Lider (evento=LIBERAR_RACAO, command_id=...)</code></pre>
-              </li>
-            </ul>
-          </section>
-
-          <section>
-            <h4>3. Idempotência (Semântica Exactly-Once)</h4>
-            <p>Comprova que retransmissões com o mesmo <code>command_id</code> (inclusive após failover) não duplicam atuações físicas nem alteram o banco duas vezes.</p>
-            <ul>
-              <li><strong>Como Executar:</strong> dispare duas vezes consecutivas a requisição abaixo com o mesmo UUID.
-              </li>
-              <li>
-                <div class="code-header">
-                  <strong>Endpoint & Payload:</strong>
-                  <button class="btn btn-xs btn-copy-preset" data-preset="idempotency"
-                    title="Copiar requisição">Copiar</button>
-                </div>
-                <pre id="code-preset-idempotency"><code>POST /api/command/dispense_food
-{"quantidade": 50.0, "command_id": "00000000-0000-0000-0000-000000000001"}</code></pre>
-              </li>
-              <li><strong>Log no Terminal (2ª execução):</strong>
-                <pre><code>[WARN] (Controller-Node1) No 1: Comando duplicado ignorado por idempotencia (command_id=00000000-0000-0000-0000-000000000001)</code></pre>
-              </li>
-            </ul>
-          </section>
-
-          <section>
-            <h4>4. Sanitização de Entradas (Validação de Domínio)</h4>
-            <p>Verifica a rejeição imediata de dados anômalos pelo validador de domínio antes de invocar o controlador ou atingir o armazenamento SQLite.</p>
-            <ul>
-              <li>
-                <div class="code-header">
-                  <strong>Endpoint & Payload:</strong>
-                  <button class="btn btn-xs btn-copy-preset" data-preset="sanitization"
-                    title="Copiar requisição">Copiar</button>
-                </div>
-                <pre id="code-preset-sanitization"><code>POST /api/command/dispense_food
-{"quantidade": -50.0}</code></pre>
-              </li>
-              <li><strong>Log no Terminal (HTTP 400 na aba Cliente RPC):</strong>
-                <pre><code>[WARN] (ClusterClient) Falha na validacao/execucao do comando dispense_food: Quantidade de racao invalida: -50.0g...</code></pre>
-              </li>
-            </ul>
-          </section>
-        </article>
-
-        <!-- Aba 2: Configuracao dos Controladores -->
-        <div class="col3-tab-pane" id="panel-col3-nodes" style="display: none;">
-          <div id="nodes-container" style="display: flex; flex-direction: column; gap: 8px;">
-            <div style="font-size: 11px; color: var(--muted); padding: 4px 0;">Consultando topologia de nos via RPC...
-            </div>
-          </div>
-        </div>
-
-        <!-- Aba 3: Swagger UI Embedded -->
-        <div class="col3-tab-pane swagger-panel-content" id="panel-col3-swagger" style="display: none;">
-          <iframe src="/docs" id="swagger-iframe" class="swagger-iframe" title="Swagger UI API Documentation"></iframe>
-        </div>
-      </div>
-    </section>
-  </main>
-
-  <script src="app.js"></script>
+  <script src="/app.js"></script>
 </body>
-
 </html>

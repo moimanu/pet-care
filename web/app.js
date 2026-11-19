@@ -1,559 +1,477 @@
-/**
- * PetCare Distributed System - Dashboard
- * Zero emojis, clean state-actions-view separation, SSE-driven.
- */
-(() => {
-  const $ = (sel, ctx = document) => ctx.querySelector(sel);
+const $ = (sel, ctx = document) => ctx.querySelector(sel);
+const $$ = (sel, ctx = document) => Array.from(ctx.querySelectorAll(sel));
 
-  // State
-  const state = {
-    connected: false,
-    isPaused: false,
-    autoScroll: true,
-    activeTab: "all",
-    nodes: [],
-    pet: {
-      racao_gramas: 0.0,
-      agua_ml: 0.0,
-      areia_usos: 0,
-      status_fuga: "--",
-      alarme_ativo: false,
-      atualizado_em: "",
-    },
-  };
+const EDGES = [
+  { from: "node-clients", to: "node-ctrl-1", label: "Pyro5 RPC :9091", bi: true },
+  { from: "node-clients", to: "node-ctrl-2", label: "Pyro5 RPC :9092", bi: true },
+  { from: "node-clients", to: "node-ctrl-3", label: "Pyro5 RPC :9093", bi: true },
+  { from: "node-ctrl-1", to: "node-ctrl-2", label: "Sync P2P", bi: true, vertical: true, dashed: true },
+  { from: "node-ctrl-2", to: "node-ctrl-3", label: "Sync P2P", bi: true, vertical: true, dashed: true },
+  { from: "node-ctrl-1", to: "node-db-1", label: "SQLite", bi: true },
+  { from: "node-ctrl-2", to: "node-db-2", label: "SQLite", bi: true },
+  { from: "node-ctrl-3", to: "node-db-3", label: "SQLite", bi: true },
+  { from: "node-ctrl-1", to: "node-mqtt", label: "Pub/Sub", bi: true, fromRight: true },
+  { from: "node-ctrl-2", to: "node-mqtt", label: "Pub/Sub", bi: true, fromRight: true },
+  { from: "node-ctrl-3", to: "node-mqtt", label: "Pub/Sub", bi: true, fromRight: true },
+  { from: "node-mqtt", to: "node-sensors", label: "Telemetria / Atuacao", bi: true },
+];
 
-  const SOURCE_TAGS = {
-    "node-1": { label: "Controlador 1", cls: "tag-node-1" },
-    "node-2": { label: "Controlador 2", cls: "tag-node-2" },
-    "node-3": { label: "Controlador 3", cls: "tag-node-3" },
-    "web": { label: "Cliente RPC", cls: "tag-middleware" },
-    "iot": { label: "IoT Edge", cls: "tag-iot" },
-    "broker": { label: "Broker MQTT", cls: "tag-broker" },
-  };
+const MIDDLEWARE_IDS = [
+  "node-ctrl-1", "node-ctrl-2", "node-ctrl-3",
+  "node-db-1", "node-db-2", "node-db-3",
+];
 
-  // View Helpers & DOM elements
-  const elConnDot = $("#conn-dot");
-  const elConnText = $("#conn-text");
-  const elSyncTime = $("#last-sync-time");
-  const elFeedback = $("#action-feedback");
+const board = { x: 0, y: 0, scale: 1 };
 
-  function showFeedback(message, isError = false) {
-    if (!elFeedback) return;
-    elFeedback.textContent = message;
-    elFeedback.className = `feedback-box show ${isError ? "feedback-error" : "feedback-success"}`;
-    setTimeout(() => {
-      elFeedback.className = "feedback-box";
-    }, 4000);
-  }
+const ACTION_TINTS = [
+  "rgba(59, 130, 246, 0.16)",
+  "rgba(16, 185, 129, 0.16)",
+  "rgba(168, 85, 247, 0.16)",
+  "rgba(245, 158, 11, 0.16)",
+  "rgba(6, 182, 212, 0.16)",
+  "rgba(244, 63, 94, 0.16)",
+];
+let actionColorIdx = -1;
+let activeTrace = null;
+const seenLogs = new Set();
+const logTints = new Map();
 
-  function renderConnection(status, label) {
-    state.connected = status;
-    if (elConnDot) elConnDot.className = `conn-dot ${status ? "online" : "offline"}`;
-    if (elConnText) elConnText.textContent = label;
-  }
+function logKey(e) {
+  return `${e.ts}|${e.component}|${e.message}`;
+}
 
-  function formatLocalTime(isoStr) {
-    if (!isoStr) return new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
-    const d = new Date(isoStr);
-    return !isNaN(d.getTime())
-      ? d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false })
-      : isoStr.slice(11, 19);
-  }
+function applyTransform() {
+  const stage = $("#board-stage");
+  stage.style.transform = `translate(${board.x}px, ${board.y}px) scale(${board.scale})`;
+  const vp = $("#board-viewport");
+  vp.style.backgroundPosition = `${board.x}px ${board.y}px`;
+  vp.style.backgroundSize = `${24 * board.scale}px ${24 * board.scale}px`;
+  $("#zoom-label").textContent = `${Math.round(board.scale * 100)}%`;
+}
 
-  function escapeHtml(str) {
-    return String(str)
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;")
-      .replace(/"/g, "&quot;")
-      .replace(/'/g, "&#039;");
-  }
+function positionNodes() {
+  $$(".node").forEach((el) => {
+    el.style.left = `${Number(el.dataset.x)}px`;
+    el.style.top = `${Number(el.dataset.y)}px`;
+  });
+}
 
-  function appendRawLog(source, rawLine) {
-    const term = $("#unified-terminal");
-    if (!term) return;
+function updateMiddlewareZone() {
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  MIDDLEWARE_IDS.forEach((id) => {
+    const el = $(`#${id}`);
+    const x = Number(el.dataset.x);
+    const y = Number(el.dataset.y);
+    minX = Math.min(minX, x);
+    minY = Math.min(minY, y);
+    maxX = Math.max(maxX, x + el.offsetWidth);
+    maxY = Math.max(maxY, y + el.offsetHeight);
+  });
+  const pad = 26;
+  const zone = $("#middleware-zone");
+  zone.style.left = `${minX - pad}px`;
+  zone.style.top = `${minY - pad}px`;
+  zone.style.width = `${maxX - minX + pad * 2}px`;
+  zone.style.height = `${maxY - minY + pad * 2}px`;
+}
 
-    // Remove placeholder line if present
-    const placeholder = term.querySelector(".raw-line[data-src='system']");
-    if (placeholder) placeholder.remove();
+function getBox(id) {
+  const el = $(`#${id}`);
+  const x = Number(el.dataset.x);
+  const y = Number(el.dataset.y);
+  const w = el.offsetWidth;
+  const h = el.offsetHeight;
+  return { x, y, w, h, cx: x + w / 2, cy: y + h / 2 };
+}
 
-    const tagInfo = SOURCE_TAGS[source] || { label: source || "Sistema", cls: "tag-generic" };
+function renderEdges() {
+  const svg = $("#flow-edges");
+  const defs = svg.querySelector("defs").outerHTML;
+  const parts = [defs];
 
-    const div = document.createElement("div");
-    div.className = "raw-line";
-    div.setAttribute("data-src", source || "generic");
-    if (state.activeTab !== "all" && state.activeTab !== source) {
-      div.classList.add("hidden");
+  EDGES.forEach((edge) => {
+    const a = getBox(edge.from);
+    const b = getBox(edge.to);
+    let x1, y1, x2, y2, d;
+
+    if (edge.vertical) {
+      const down = b.cy >= a.cy;
+      x1 = a.cx;
+      y1 = down ? a.y + a.h : a.y;
+      x2 = b.cx;
+      y2 = down ? b.y : b.y + b.h;
+      const midY = (y1 + y2) / 2;
+      d = `M ${x1} ${y1} C ${x1} ${midY}, ${x2} ${midY}, ${x2} ${y2}`;
+    } else if (edge.fromRight) {
+      x1 = a.x + a.w;
+      y1 = a.cy;
+      x2 = b.x;
+      y2 = b.cy;
+      const dx = Math.max(60, Math.abs(x2 - x1) * 0.45);
+      d = `M ${x1} ${y1} C ${x1 + dx} ${y1}, ${x2 - dx} ${y2}, ${x2} ${y2}`;
+    } else {
+      const right = b.cx >= a.cx;
+      x1 = right ? a.x + a.w : a.x;
+      y1 = a.cy;
+      x2 = right ? b.x : b.x + b.w;
+      y2 = b.cy;
+      const dx = Math.max(40, Math.abs(x2 - x1) * 0.45);
+      const c1x = right ? x1 + dx : x1 - dx;
+      const c2x = right ? x2 - dx : x2 + dx;
+      d = `M ${x1} ${y1} C ${c1x} ${y1}, ${c2x} ${y2}, ${x2} ${y2}`;
     }
 
-    let lvlClass = "";
-    if (rawLine.includes("[WARN") || rawLine.includes("WARNING")) {
-      lvlClass = "level-warn";
-    } else if (rawLine.includes("[ERROR") || rawLine.includes("CRITICAL")) {
-      lvlClass = "level-error";
-    }
+    const mx = (x1 + x2) / 2;
+    const my = (y1 + y2) / 2;
+    const markerStart = edge.bi ? 'marker-start="url(#arrow)"' : "";
+    const cls = edge.dashed ? "edge-path edge-dashed" : "edge-path";
+    const labelW = edge.label.length * 6.2 + 12;
 
-    div.innerHTML = `<span class="raw-tag ${tagInfo.cls}">[${tagInfo.label}]</span><span class="raw-text ${lvlClass}">${escapeHtml(rawLine)}</span>`;
-    term.appendChild(div);
+    parts.push(
+      `<path class="${cls}" d="${d}" marker-end="url(#arrow)" ${markerStart}></path>`,
+      `<rect class="edge-label-bg" x="${mx - labelW / 2}" y="${my - 9}" width="${labelW}" height="18" rx="4"></rect>`,
+      `<text class="edge-label" x="${mx}" y="${my}">${edge.label}</text>`
+    );
+  });
 
-    updateLineCount();
+  svg.innerHTML = parts.join("");
+}
 
-    // Prevent memory leaks by capping lines in DOM
-    while (term.children.length > 500) {
-      term.removeChild(term.firstElementChild);
-    }
+function updateBoardGeometry() {
+  updateMiddlewareZone();
+  renderEdges();
+}
 
-    if (state.autoScroll) {
-      term.scrollTop = term.scrollHeight;
-    }
-  }
+function fitToScreen() {
+  const vp = $("#board-viewport");
+  const nodes = $$(".node");
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  nodes.forEach((el) => {
+    const x = Number(el.dataset.x);
+    const y = Number(el.dataset.y);
+    minX = Math.min(minX, x);
+    minY = Math.min(minY, y);
+    maxX = Math.max(maxX, x + el.offsetWidth);
+    maxY = Math.max(maxY, y + el.offsetHeight);
+  });
+  const pad = 48;
+  const contentW = maxX - minX + pad * 2;
+  const contentH = maxY - minY + pad * 2;
+  const scale = Math.min(1, Math.max(0.28, Math.min(vp.clientWidth / contentW, vp.clientHeight / contentH)));
+  board.scale = scale;
+  board.x = (vp.clientWidth - contentW * scale) / 2 - (minX - pad) * scale;
+  board.y = (vp.clientHeight - contentH * scale) / 2 - (minY - pad) * scale;
+  applyTransform();
+}
 
-  function updateLineCount() {
-    const term = $("#unified-terminal");
-    if (!term) return;
-    const countEl = $("#term-line-count");
-    if (!countEl) return;
-    const visibleCount = term.querySelectorAll(".raw-line:not(.hidden)").length;
-    countEl.textContent = `${visibleCount} eventos`;
-  }
+function zoomAt(factor, clientX, clientY) {
+  const vp = $("#board-viewport");
+  const rect = vp.getBoundingClientRect();
+  const ox = clientX - rect.left;
+  const oy = clientY - rect.top;
+  const nextScale = Math.min(1.8, Math.max(0.25, board.scale * factor));
+  const ratio = nextScale / board.scale;
+  board.x = ox - (ox - board.x) * ratio;
+  board.y = oy - (oy - board.y) * ratio;
+  board.scale = nextScale;
+  applyTransform();
+}
 
-  function renderPetState() {
-    const p = state.pet;
-    const elFood = $("#val-food");
-    const elWater = $("#val-water");
-    const elLitter = $("#val-litter");
+function setupBoardInteractions() {
+  const vp = $("#board-viewport");
+  let panStart = null;
+  let dragNode = null;
 
-    if (elFood) elFood.textContent = Number(p.racao_gramas || 0).toFixed(1);
-    if (elWater) elWater.textContent = Number(p.agua_ml || 0).toFixed(1);
-    if (elLitter) elLitter.textContent = String(p.areia_usos ?? 0);
+  vp.addEventListener("pointerdown", (e) => {
+    if (e.target.closest("button, input, select, .logs")) return;
 
-    const elPerimeter = $("#val-perimeter");
-    if (elPerimeter) {
-      const perimeter = String(p.status_fuga || "--").toUpperCase();
-      elPerimeter.textContent = perimeter;
-      elPerimeter.className = `badge ${perimeter === "DENTRO" ? "badge-success" : perimeter === "FORA" ? "badge-danger" : "badge-neutral"}`;
-    }
-
-    const elAlarm = $("#val-alarm");
-    if (elAlarm) {
-      const isAlarm = Boolean(p.alarme_ativo);
-      elAlarm.textContent = isAlarm ? "DISPARADO" : "DESARMADO";
-      elAlarm.className = `badge ${isAlarm ? "badge-danger" : "badge-neutral"}`;
-    }
-
-    if (p.atualizado_em && elSyncTime) {
-      elSyncTime.textContent = `Ultima sincronizacao: ${formatLocalTime(p.atualizado_em)}`;
-    }
-  }
-
-  // Render Nodes in Column 3
-  function renderNodes() {
-    const container = $("#nodes-container");
-    if (!container) return;
-
-    if (!state.nodes || state.nodes.length === 0) {
-      container.innerHTML = `<div style="font-size: 11px; color: var(--muted); padding: 4px 0;">Nenhum nó detectado no Middleware.</div>`;
+    const head = e.target.closest(".node-head");
+    if (head) {
+      const node = head.closest(".node");
+      dragNode = {
+        el: node,
+        startX: e.clientX,
+        startY: e.clientY,
+        origX: Number(node.dataset.x),
+        origY: Number(node.dataset.y),
+      };
+      vp.setPointerCapture(e.pointerId);
       return;
     }
 
-    container.innerHTML = state.nodes.map((node) => {
-      const isOffline = Boolean(node.offline);
-      const isPrimary = Boolean(node.primary);
-      const isCorrupt = Boolean(node.corrupt);
+    if (e.target.closest(".node")) return;
 
-      return `
-        <div class="node-item ${isOffline ? "is-offline" : ""}" data-node-id="${node.id}">
-          <div class="node-meta">
-            <div class="node-title-row">
-              <i data-lucide="server" aria-hidden="true"></i>
-              <span>Controlador ${node.id}</span>
-            </div>
-            <div class="node-badges-row">
-              <span class="badge ${isOffline ? "badge-danger" : "badge-success"}">${isOffline ? "OFFLINE" : "ONLINE"}</span>
-              <span class="badge ${isPrimary ? "badge-accent" : "badge-neutral"}">${isPrimary ? "LÍDER" : "RÉPLICA"}</span>
-              <span class="badge ${isCorrupt ? "badge-warning" : "badge-neutral"}">${isCorrupt ? "BIZANTINO" : "ÍNTEGRO"}</span>
-            </div>
-          </div>
-          <div class="node-actions">
-            <button class="btn btn-xs ${isOffline ? "btn-primary" : "btn-danger"} btn-node-offline"
-              data-node-id="${node.id}"
-              aria-label="${isOffline ? "Ligar nó " + node.id : "Derrubar nó " + node.id}"
-              title="${isOffline ? "Restaurar nó (recuperação)" : "Derrubar nó (simular crash-stop)"}">
-              <i data-lucide="power" aria-hidden="true"></i>
-              <span>${isOffline ? "Ligar" : "Derrubar"}</span>
-            </button>
-            <button class="btn btn-xs ${isCorrupt ? "btn-warn" : ""} btn-node-corrupt"
-              data-node-id="${node.id}"
-              aria-label="Alternar falha bizantina no nó ${node.id}"
-              title="Injetar ou remover divergência bizantina">
-              <i data-lucide="shield-alert" aria-hidden="true"></i>
-              <span>${isCorrupt ? "Curar" : "Corromper"}</span>
-            </button>
-          </div>
-        </div>
-      `;
-    }).join("");
+    panStart = { x: e.clientX - board.x, y: e.clientY - board.y };
+    vp.classList.add("panning");
+    vp.setPointerCapture(e.pointerId);
+  });
 
-    if (window.lucide) {
-      window.lucide.createIcons();
+  vp.addEventListener("pointermove", (e) => {
+    if (dragNode) {
+      const dx = (e.clientX - dragNode.startX) / board.scale;
+      const dy = (e.clientY - dragNode.startY) / board.scale;
+      dragNode.el.dataset.x = Math.round(dragNode.origX + dx);
+      dragNode.el.dataset.y = Math.round(dragNode.origY + dy);
+      dragNode.el.style.left = `${dragNode.el.dataset.x}px`;
+      dragNode.el.style.top = `${dragNode.el.dataset.y}px`;
+      updateBoardGeometry();
+      return;
     }
-  }
+    if (panStart) {
+      board.x = e.clientX - panStart.x;
+      board.y = e.clientY - panStart.y;
+      applyTransform();
+    }
+  });
 
-  // Network Actions
-  async function fetchNodes() {
-    try {
-      const res = await fetch("/api/nodes");
-      if (res.ok) {
-        const data = await res.json();
-        if (data.sucesso && Array.isArray(data.nodes)) {
-          state.nodes = data.nodes;
-          renderNodes();
-        }
+  const endDrag = () => {
+    dragNode = null;
+    panStart = null;
+    vp.classList.remove("panning");
+  };
+  vp.addEventListener("pointerup", endDrag);
+  vp.addEventListener("pointercancel", endDrag);
+
+  vp.addEventListener(
+    "wheel",
+    (e) => {
+      if (e.target.closest(".logs")) return;
+      e.preventDefault();
+      zoomAt(e.deltaY < 0 ? 1.1 : 0.9, e.clientX, e.clientY);
+    },
+    { passive: false }
+  );
+
+  $("#btn-zoom-in").addEventListener("click", () => {
+    const r = vp.getBoundingClientRect();
+    zoomAt(1.15, r.left + r.width / 2, r.top + r.height / 2);
+  });
+  $("#btn-zoom-out").addEventListener("click", () => {
+    const r = vp.getBoundingClientRect();
+    zoomAt(0.85, r.left + r.width / 2, r.top + r.height / 2);
+  });
+  $("#btn-fit").addEventListener("click", fitToScreen);
+}
+
+function setBadge(el, text, kind) {
+  el.textContent = text;
+  el.className = `badge badge-${kind}`;
+}
+
+async function postAction(payload) {
+  actionColorIdx = (actionColorIdx + 1) % ACTION_TINTS.length;
+  activeTrace = {
+    tint: ACTION_TINTS[actionColorIdx],
+    until: Date.now() + 2500,
+  };
+  setBadge($("#conn-badge"), "PROCESSANDO", "warn");
+  try {
+    const res = await fetch("/api/action", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json();
+    if (payload.op === "client_command" && data.command_id) {
+      $("#cmd-id-input").value = data.command_id;
+    }
+  } catch (err) {
+    console.error(err);
+  }
+}
+
+function escapeHtml(str) {
+  return String(str).replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+}
+
+function tagNewLogs(logs) {
+  const now = Date.now();
+  logs.forEach((entry) => {
+    const key = logKey(entry);
+    if (!seenLogs.has(key)) {
+      seenLogs.add(key);
+      if (activeTrace && now <= activeTrace.until) {
+        logTints.set(key, activeTrace.tint);
       }
-    } catch (err) {
-      console.warn("Falha ao obter topologia de nós", err);
     }
+  });
+}
+
+function renderLogs(containerId, entries) {
+  const el = $(containerId);
+  const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 24;
+  el.innerHTML = entries
+    .map((e) => {
+      const tint = logTints.get(logKey(e));
+      const style = tint ? ` style="background:${tint}"` : "";
+      return `<div class="log-line log-${e.level}"${style}><span class="log-ts">${e.ts}</span><span>${escapeHtml(e.message)}</span></div>`;
+    })
+    .join("");
+  if (atBottom) el.scrollTop = el.scrollHeight;
+}
+
+function renderState(data) {
+  const { state, logs } = data;
+  tagNewLogs(logs);
+  const c = state.clients;
+
+  setBadge($("#conn-badge"), "ATIVO", "ok");
+  if (c.state) {
+    $("#m-racao").textContent = `${c.state.racao_gramas}g`;
+    $("#m-agua").textContent = `${c.state.agua_ml}ml`;
+    $("#m-areia").textContent = c.state.areia_usos;
+    $("#m-fuga").textContent = c.state.status_fuga;
+    $("#m-alarme").textContent = c.state.alarme_ativo ? "ATIVO" : "DESLIGADO";
+    $("#m-hash").textContent = c.majority_hash || "--";
   }
 
-  async function postCommand(endpoint, payload = {}) {
-    try {
-      const res = await fetch(`/api/command/${endpoint}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-      const data = await res.json();
-      if (!res.ok || !data.sucesso) {
-        showFeedback(data.mensagem || "Erro na solicitacao", true);
-      } else {
-        showFeedback(data.mensagem || "Comando executado com sucesso", false);
-        if (data.estado) {
-          state.pet = Object.assign({}, state.pet, data.estado);
-          renderPetState();
-        }
+  const hasDiv = (c.divergent || []).length > 0;
+  const clientStatus =
+    c.quorum_reached === null || c.quorum_reached === undefined
+      ? "AGUARDANDO"
+      : !c.quorum_reached
+        ? "ERRO"
+        : hasDiv
+          ? "DIVERGENCIA"
+          : "ATIVO";
+  const clientKind =
+    c.quorum_reached === null || c.quorum_reached === undefined
+      ? "idle"
+      : !c.quorum_reached
+        ? "err"
+        : hasDiv
+          ? "warn"
+          : "ok";
+  setBadge($("#status-clients"), clientStatus, clientKind);
+  $("#rpc-votes").textContent = c.votes || "--";
+
+  state.controllers.forEach((n) => {
+    const statusText = !n.alive
+      ? "INATIVO"
+      : n.byzantine
+        ? "BIZANTINO"
+        : n.divergent
+          ? "DIVERGENTE"
+          : n.rpc_ok
+            ? "ATIVO"
+            : "INICIANDO";
+    const badgeKind = !n.alive
+      ? "idle"
+      : n.byzantine || n.divergent
+        ? "err"
+        : n.rpc_ok
+          ? "ok"
+          : "warn";
+    const role = n.is_primary ? "LIDER" : "REPLICA";
+
+    $(`#node-ctrl-${n.id}`).classList.toggle("node-byzantine", Boolean(n.alive && n.byzantine));
+    $(`#title-ctrl-${n.id}`).textContent = `Controlador ${n.id} (${role})`;
+    setBadge($(`#status-ctrl-${n.id}`), statusText, badgeKind);
+    $(`#actions-ctrl-${n.id}`).innerHTML = `
+      ${
+        n.alive
+          ? `<button class="btn btn-sm" data-op="controller_stop" data-node="${n.id}">Parar Processo</button>`
+          : `<button class="btn btn-sm" data-op="controller_start" data-node="${n.id}">Iniciar Processo</button>`
       }
-      fetchNodes(); // update roles after potential failover
-      return data;
-    } catch (err) {
-      showFeedback(`Falha de comunicacao: ${err.message}`, true);
-      throw err;
-    }
-  }
-
-  async function toggleNodeOffline(nodeId) {
-    try {
-      const res = await fetch(`/api/nodes/${nodeId}/toggle_offline`, { method: "POST" });
-      if (res.ok) {
-        await fetchNodes();
+      ${
+        n.alive && !n.is_primary && !n.byzantine
+          ? `<button class="btn btn-sm" data-op="rpc_promote" data-node="${n.id}">Promover a Lider</button>`
+          : ""
       }
-    } catch (err) {
-      console.error("Erro alternando status offline do nó:", err);
-    }
-  }
-
-  async function toggleNodeCorrupt(nodeId) {
-    try {
-      const res = await fetch(`/api/nodes/${nodeId}/toggle_corrupt`, { method: "POST" });
-      if (res.ok) {
-        await fetchNodes();
+      ${
+        n.alive
+          ? `<button class="btn btn-sm ${n.byzantine ? "btn-warn" : "btn-danger"}" data-op="controller_byzantine" data-node="${n.id}" data-enabled="${!n.byzantine}">${
+              n.byzantine ? "Restaurar Honesto" : "Tornar Bizantino"
+            }</button>`
+          : ""
       }
-    } catch (err) {
-      console.error("Erro alternando falha bizantina do nó:", err);
-    }
+    `;
+    renderLogs(`#logs-ctrl-${n.id}`, logs.filter((l) => l.component === `controller_${n.id}`));
+  });
+
+  const majHash = c.majority_hash;
+  state.storage.forEach((s) => {
+    const synced = !majHash || s.hash === majHash;
+    setBadge($(`#status-db-${s.id}`), synced ? "SINCRONIZADO" : "DIVERGENTE", synced ? "ok" : "warn");
+    $(`#hash-db-${s.id}`).textContent = s.hash;
+    $(`#meta-db-${s.id}`).textContent =
+      `Racao: ${s.state.racao_gramas}g | Agua: ${s.state.agua_ml}ml | Areia: ${s.state.areia_usos} | ${s.state.status_fuga} | Ev: ${s.event_count}`;
+    renderLogs(`#logs-db-${s.id}`, logs.filter((l) => l.component === `storage_${s.id}`));
+  });
+
+  setBadge($("#status-mqtt"), state.mqtt.connected ? "ATIVO" : "ERRO", state.mqtt.connected ? "ok" : "err");
+  setBadge($("#status-sensors"), state.sensors.alive ? "ATIVO" : "INATIVO", state.sensors.alive ? "ok" : "idle");
+
+  renderLogs("#logs-clients", logs.filter((l) => l.component === "clients" || l.component === "rpc"));
+  renderLogs("#logs-mqtt", logs.filter((l) => l.component === "mqtt"));
+  renderLogs("#logs-sensors", logs.filter((l) => l.component === "sensors"));
+
+  updateBoardGeometry();
+}
+
+document.addEventListener("click", (e) => {
+  const btn = e.target.closest("[data-op]");
+  if (!btn) return;
+  const op = btn.dataset.op;
+
+  if (op === "new_uuid") {
+    $("#cmd-id-input").value = crypto.randomUUID();
+    return;
   }
-
-  // SSE Connection
-  function setupEventSource() {
-    const sse = new EventSource("/api/events");
-
-    sse.onopen = () => {
-      renderConnection(true, "SSE Ativo (Tempo Real)");
+  if (op === "client_command") {
+    postAction({ op, action: btn.dataset.action, command_id: $("#cmd-id-input").value });
+    return;
+  }
+  if (op === "rpc_quorum" || op === "rpc_read" || op === "sensor_toggle_proc") {
+    postAction({ op });
+    return;
+  }
+  if (op === "rpc_promote" || op === "controller_stop" || op === "controller_start") {
+    postAction({ op, node_id: Number(btn.dataset.node) });
+    return;
+  }
+  if (op === "controller_byzantine") {
+    postAction({
+      op,
+      node_id: Number(btn.dataset.node),
+      enabled: btn.dataset.enabled === "true",
+    });
+    return;
+  }
+  if (op === "storage_mutate") {
+    const nid = Number(btn.dataset.node);
+    const field = $(`#field-db-${nid}`).value;
+    const rawVal = $(`#val-db-${nid}`).value;
+    const value = field === "status_fuga" ? rawVal : Number(rawVal);
+    postAction({ op, node_id: nid, field, value });
+    return;
+  }
+  if (op === "mqtt_publish") {
+    postAction({ op, topic: $("#mqtt-topic").value, payload: $("#mqtt-payload").value });
+    return;
+  }
+  if (op === "sensor_auto") {
+    postAction({ op, enabled: btn.dataset.enabled === "true" });
+    return;
+  }
+  if (op === "sensor_publish") {
+    const sensor = btn.dataset.sensor;
+    const map = {
+      racao: { nivel_gramas: Number($("#inp-racao").value) },
+      agua: { nivel_ml: Number($("#inp-agua").value) },
+      areia: { usos_acumulados: Number($("#inp-areia").value) },
+      fuga: { perimetro: $("#inp-fuga").value },
     };
-
-    sse.onerror = () => {
-      renderConnection(false, "SSE Desconectado (Tentando...)");
-    };
-
-    sse.addEventListener("state", (evt) => {
-      if (state.isPaused) return;
-      try {
-        const payload = JSON.parse(evt.data);
-        state.pet = Object.assign({}, state.pet, payload);
-        renderPetState();
-      } catch (err) {
-        console.error("Erro parsing state event", err);
-      }
-    });
-
-    sse.addEventListener("raw_log", (evt) => {
-      if (state.isPaused) return;
-      try {
-        const entry = JSON.parse(evt.data);
-        appendRawLog(entry.source, entry.line);
-      } catch (err) {
-        console.error("Erro parsing raw_log event", err);
-      }
-    });
-
-    sse.addEventListener("log", (evt) => {
-      if (state.isPaused) return;
-      try {
-        const entry = JSON.parse(evt.data);
-        if (entry.payload) {
-          const p = entry.payload;
-          let changed = false;
-          if (p.nivel_gramas !== undefined && p.nivel_gramas !== null) {
-            state.pet.racao_gramas = Number(p.nivel_gramas);
-            changed = true;
-          }
-          if (p.nivel_ml !== undefined && p.nivel_ml !== null) {
-            state.pet.agua_ml = Number(p.nivel_ml);
-            changed = true;
-          }
-          if (p.usos_acumulados !== undefined && p.usos_acumulados !== null) {
-            state.pet.areia_usos = Number(p.usos_acumulados);
-            changed = true;
-          }
-          if (p.perimetro) {
-            state.pet.status_fuga = String(p.perimetro);
-            changed = true;
-          }
-          if (p.alarme_ativo !== undefined && p.alarme_ativo !== null) {
-            state.pet.alarme_ativo = Boolean(p.alarme_ativo);
-            changed = true;
-          }
-          if (entry.message && entry.message.includes("BUZZER ATIVADO")) {
-            state.pet.alarme_ativo = true;
-            changed = true;
-          }
-          if (entry.message && entry.message.includes("Alarme silenciado")) {
-            state.pet.alarme_ativo = false;
-            changed = true;
-          }
-          if (entry.timestamp) {
-            state.pet.atualizado_em = entry.timestamp;
-            changed = true;
-          }
-          if (changed) {
-            renderPetState();
-          }
-        }
-      } catch (err) {
-        console.error("Erro parsing log event", err);
-      }
-    });
+    postAction({ op, sensor, payload: map[sensor] });
   }
+});
 
-  // Event Listeners & Binding
-  function bindEvents() {
-    // Dispense Food
-    const btnDispense = $("#btn-dispense");
-    if (btnDispense) {
-      btnDispense.addEventListener("click", () => {
-        const val = parseFloat($("#input-food-qty").value) || 50.0;
-        postCommand("dispense_food", { quantidade: val });
-      });
-    }
+positionNodes();
+setupBoardInteractions();
+updateBoardGeometry();
+fitToScreen();
+window.addEventListener("resize", updateBoardGeometry);
 
-    // Refill Water
-    const btnWater = $("#btn-water");
-    if (btnWater) {
-      btnWater.addEventListener("click", () => {
-        const val = parseFloat($("#input-water-qty").value) || 200.0;
-        postCommand("refill_water", { quantidade: val });
-      });
-    }
-
-    // Reset Litter
-    const btnLitter = $("#btn-clean-litter");
-    if (btnLitter) {
-      btnLitter.addEventListener("click", () => {
-        postCommand("clean_litter");
-      });
-    }
-
-    // Silence Alarm
-    const btnSilence = $("#btn-silence");
-    if (btnSilence) {
-      btnSilence.addEventListener("click", () => {
-        postCommand("silence_alarm");
-      });
-    }
-
-    // Terminal Process Filter Tabs
-    document.querySelectorAll(".terminal-tabs .term-tab[data-tab]").forEach((tabBtn) => {
-      tabBtn.addEventListener("click", () => {
-        document.querySelectorAll(".terminal-tabs .term-tab[data-tab]").forEach((b) => {
-          b.classList.remove("active");
-          b.setAttribute("aria-selected", "false");
-        });
-        tabBtn.classList.add("active");
-        tabBtn.setAttribute("aria-selected", "true");
-        state.activeTab = tabBtn.getAttribute("data-tab") || "all";
-
-        const term = $("#unified-terminal");
-        if (term) {
-          term.querySelectorAll(".raw-line").forEach((line) => {
-            const src = line.getAttribute("data-src");
-            if (state.activeTab === "all" || src === state.activeTab) {
-              line.classList.remove("hidden");
-            } else {
-              line.classList.add("hidden");
-            }
-          });
-          updateLineCount();
-          if (state.autoScroll) {
-            term.scrollTop = term.scrollHeight;
-          }
-        }
-      });
-    });
-
-    // Clear Terminal Button
-    const btnClear = $("#btn-clear-term");
-    if (btnClear) {
-      btnClear.addEventListener("click", () => {
-        const term = $("#unified-terminal");
-        if (term) {
-          term.innerHTML = "";
-          updateLineCount();
-        }
-      });
-    }
-
-    // Auto-scroll Button
-    const btnScroll = $("#btn-autoscroll");
-    if (btnScroll) {
-      btnScroll.addEventListener("click", () => {
-        state.autoScroll = !state.autoScroll;
-        btnScroll.classList.toggle("active", state.autoScroll);
-        btnScroll.title = state.autoScroll ? "Auto-scroll ativo" : "Auto-scroll pausado";
-        if (state.autoScroll) {
-          const term = $("#unified-terminal");
-          if (term) term.scrollTop = term.scrollHeight;
-        }
-      });
-    }
-
-    // Pause Toggle
-    const btnPause = $("#btn-toggle-pause");
-    if (btnPause) {
-      btnPause.addEventListener("click", () => {
-        state.isPaused = !state.isPaused;
-        const label = $("#label-pause-btn");
-        if (state.isPaused) {
-          if (label) label.textContent = "Retomar";
-          btnPause.innerHTML = `<i data-lucide="play" aria-hidden="true"></i><span id="label-pause-btn">Retomar</span>`;
-          renderConnection(false, "Pausado");
-        } else {
-          if (label) label.textContent = "Pausar";
-          btnPause.innerHTML = `<i data-lucide="pause" aria-hidden="true"></i><span id="label-pause-btn">Pausar</span>`;
-          renderConnection(true, "SSE Ativo (Tempo Real)");
-        }
-        if (window.lucide) {
-          window.lucide.createIcons();
-        }
-      });
-    }
-
-    // Column 3 Tabs (Guia de Testes, Controladores, Swagger API)
-    const col3Tabs = document.querySelectorAll(".term-tab[data-col3-tab]");
-    const col3Panes = {
-      guide: $("#panel-col3-guide"),
-      nodes: $("#panel-col3-nodes"),
-      swagger: $("#panel-col3-swagger"),
-    };
-
-    col3Tabs.forEach((tabBtn) => {
-      tabBtn.addEventListener("click", () => {
-        const targetKey = tabBtn.getAttribute("data-col3-tab");
-        col3Tabs.forEach((b) => {
-          const isActive = b === tabBtn;
-          b.classList.toggle("active", isActive);
-          b.setAttribute("aria-selected", isActive ? "true" : "false");
-        });
-        Object.entries(col3Panes).forEach(([key, pane]) => {
-          if (pane) {
-            pane.style.display = key === targetKey ? "flex" : "none";
-          }
-        });
-      });
-    });
-
-    // Node Delegation (Offline & Corrupt toggles)
-    const nodesContainer = $("#nodes-container");
-    if (nodesContainer) {
-      nodesContainer.addEventListener("click", (evt) => {
-        const btnOffline = evt.target.closest(".btn-node-offline");
-        if (btnOffline) {
-          const nid = btnOffline.getAttribute("data-node-id");
-          if (nid) toggleNodeOffline(nid);
-          return;
-        }
-
-        const btnCorrupt = evt.target.closest(".btn-node-corrupt");
-        if (btnCorrupt) {
-          const nid = btnCorrupt.getAttribute("data-node-id");
-          if (nid) toggleNodeCorrupt(nid);
-          return;
-        }
-      });
-    }
-
-    // Copy Preset JSON buttons
-    document.querySelectorAll(".btn-copy-preset").forEach((btn) => {
-      btn.addEventListener("click", () => {
-        const presetKey = btn.getAttribute("data-preset");
-        const codeEl = $(`#code-preset-${presetKey}`);
-        if (codeEl) {
-          const rawText = codeEl.textContent.trim();
-          const jsonMatch = rawText.match(/\{[\s\S]*\}/);
-          const textToCopy = jsonMatch ? jsonMatch[0] : rawText;
-          navigator.clipboard.writeText(textToCopy).then(() => {
-            const labelEl = btn.querySelector("span") || btn;
-            const originalText = labelEl.textContent;
-            labelEl.textContent = "Copiado!";
-            setTimeout(() => {
-              labelEl.textContent = originalText;
-            }, 1800);
-          }).catch((err) => {
-            console.error("Falha ao copiar", err);
-          });
-        }
-      });
-    });
-  }
-
-  // Initialization
-  async function init() {
-    bindEvents();
-    setupEventSource();
-    fetchNodes();
-
-    // Poll nodes periodically to keep status fresh
-    setInterval(fetchNodes, 3000);
-
-    try {
-      const res = await fetch("/api/status");
-      if (res.ok) {
-        const data = await res.json();
-        if (data.sucesso && data.estado) {
-          state.pet = Object.assign({}, state.pet, data.estado);
-          renderPetState();
-        }
-      }
-    } catch (err) {
-      console.warn("Falha ao obter status inicial", err);
-    }
-
-    if (window.lucide) {
-      window.lucide.createIcons();
-    }
-  }
-
-  if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", init);
-  } else {
-    init();
-  }
-})();
+const ev = new EventSource("/api/events");
+ev.onmessage = (msg) => renderState(JSON.parse(msg.data));
+ev.onerror = () => setBadge($("#conn-badge"), "ERRO", "err");
