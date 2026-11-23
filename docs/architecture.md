@@ -6,7 +6,7 @@
 
 ```mermaid
 flowchart LR
-    CLI["Cliente / Painel Web\n(app/web_server.py + app/rpc_client.py)\n- ClusterRpcClient & ClientObserver\n- Quorum Bizantino (2f+1)\n- Idempotencia UUID"]
+    CLI["Cliente / Painel Web\n(app/web_server.py + app/client.py)\n- ClusterRpcClient & ClientObserver\n- Quorum Bizantino (2f+1)\n- Idempotencia UUID"]
 
     subgraph MIDDLEWARE["MIDDLEWARE (Infraestrutura Distribuida)"]
         direction TB
@@ -135,7 +135,7 @@ O hash canônico (`PetState.canonical_hash()`) é calculado com `SHA-256` (trunc
 │   ├── domain.py       # Entidade PetState, hash canonico, validacao fisica e regras de transicao
 │   ├── storage.py      # Persistencia SQLite por replica (NodeStorage: pet_state + event_log)
 │   ├── controller.py   # Processo Pyro5 do controlador, consumidor/produtor MQTT, sync e failover P2P
-│   ├── rpc_client.py   # ClusterRpcClient (quorum 2f+1, failover RPC, destituicao de lider) e ClientObserver
+│   ├── client.py   # ClusterRpcClient (quorum 2f+1, failover RPC, destituicao de lider) e ClientObserver
 │   ├── sensors.py      # Processo IoT de borda (IoTDeviceNode: sensores, atuadores e deduplicacao)
 │   ├── event_bus.py    # Barramento de logs estruturados em JSONL (logs/events.jsonl)
 │   └── web_server.py   # Servidor HTTP/SSE (:8080), API /api/action e orquestrador ProcessManager

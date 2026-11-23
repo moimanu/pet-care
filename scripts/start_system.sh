@@ -39,5 +39,5 @@ if command -v docker &> /dev/null && [ -f "docker-compose.yml" ]; then
     docker compose up -d mosquitto
 fi
 
-echo "Iniciando sistema Pet Care (http://localhost:8080)..."
+echo "Iniciando sistema Pet Care (controladores, sensores, cliente RPC e painel web em http://localhost:8080)..."
 exec "$PYTHON" -m app.web_server

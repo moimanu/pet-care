@@ -1,12 +1,14 @@
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
+import signal
+import sys
 import threading
 from typing import Callable
 import uuid
 
 import Pyro5.api
 
-from app.config import ALL_NODES, peer_uri
+from app.config import ALL_NODES, CLIENT_PORT, peer_uri
 from app.event_bus import emit_event
 
 
@@ -28,51 +30,54 @@ def _proxy(node_id: int, timeout: float = 1.0) -> Pyro5.api.Proxy:
     return proxy
 
 
+@Pyro5.api.expose
 class ClusterRpcClient:
-    """Cliente Pyro5 RPC com quorum bizantino (2f+1) e failover transparente."""
+    """Processo/servico cliente Pyro5 RPC com quorum bizantino (2f+1) e failover transparente."""
 
     def __init__(self) -> None:
         self._last_divergent: tuple[int, ...] = ()
-        self._daemon: Pyro5.api.Daemon | None = None
+        self._last_consensus: dict | None = None
         self._observer_uri: str | None = None
-        self._on_consensus_update: Callable[[dict], None] | None = None
+        self._ui_lock = threading.Lock()
+        self._ui_observers: set[str] = set()
         self._push_lock = threading.Lock()
         self._debounce_timer: threading.Timer | None = None
 
-    def start_observer(
-        self,
-        on_consensus_update: Callable[[dict], None],
-        host: str = "localhost",
-        port: int = 0,
-    ) -> str:
-        self._on_consensus_update = on_consensus_update
-        self._daemon = Pyro5.api.Daemon(host=host, port=port)
-        observer = ClientObserver(self._handle_observer_push)
-        uri = self._daemon.register(observer, "petcare.client.observer")
-        self._observer_uri = str(uri)
-        threading.Thread(target=self._daemon.requestLoop, daemon=True).start()
-        self.register_all_observers()
-        emit_event("rpc", f"Observer Pyro5 ativo em {self._observer_uri}")
-        return self._observer_uri
+    def set_observer_uri(self, uri: str) -> None:
+        self._observer_uri = uri
 
-    def stop_observer(self) -> None:
-        with self._push_lock:
-            if self._debounce_timer is not None:
-                self._debounce_timer.cancel()
-                self._debounce_timer = None
-        if self._observer_uri:
-            for nid in ALL_NODES:
+    def register_ui_observer(self, ui_uri: str) -> bool:
+        with self._ui_lock:
+            self._ui_observers.add(ui_uri)
+        return True
+
+    def unregister_ui_observer(self, ui_uri: str) -> bool:
+        with self._ui_lock:
+            self._ui_observers.discard(ui_uri)
+        return True
+
+    def _notify_ui_observers(self, consensus: dict) -> None:
+        with self._ui_lock:
+            uris = list(self._ui_observers)
+        if not uris:
+            return
+
+        def _push() -> None:
+            dead: list[str] = []
+            for uri in uris:
                 try:
-                    with _proxy(nid) as p:
-                        p.unregister_observer(self._observer_uri)
+                    proxy = Pyro5.api.Proxy(uri)
+                    proxy._pyroTimeout = 1.0
+                    with proxy:
+                        proxy.on_consensus(consensus)
                 except Exception:
-                    pass
-        if self._daemon is not None:
-            try:
-                self._daemon.shutdown()
-            except Exception:
-                pass
-            self._daemon = None
+                    dead.append(uri)
+            if dead:
+                with self._ui_lock:
+                    for uri in dead:
+                        self._ui_observers.discard(uri)
+
+        threading.Thread(target=_push, daemon=True).start()
 
     def register_observer_on_node(self, node_id: int) -> bool:
         if not self._observer_uri:
@@ -89,7 +94,20 @@ class ClusterRpcClient:
         with ThreadPoolExecutor(max_workers=3) as pool:
             list(pool.map(self.register_observer_on_node, ALL_NODES))
 
-    def _handle_observer_push(self, payload: dict) -> None:
+    def unregister_all_observers(self) -> None:
+        with self._push_lock:
+            if self._debounce_timer is not None:
+                self._debounce_timer.cancel()
+                self._debounce_timer = None
+        if self._observer_uri:
+            for nid in ALL_NODES:
+                try:
+                    with _proxy(nid) as p:
+                        p.unregister_observer(self._observer_uri)
+                except Exception:
+                    pass
+
+    def handle_observer_push(self, payload: dict) -> None:
         with self._push_lock:
             if self._debounce_timer is not None:
                 self._debounce_timer.cancel()
@@ -99,8 +117,7 @@ class ClusterRpcClient:
 
     def _evaluate_consensus(self) -> None:
         consensus = self.get_consensus_state(log_result=False, enforce_leader=True)
-        if self._on_consensus_update is not None:
-            self._on_consensus_update(consensus)
+        self._notify_ui_observers(consensus)
 
     def _query_all_nodes(self, method: str) -> list[dict]:
         """Chama `method` (ping/get_state) em todos os nos em paralelo."""
@@ -118,6 +135,9 @@ class ClusterRpcClient:
     def get_nodes_status(self) -> list[dict]:
         return self._query_all_nodes("ping")
 
+    def get_last_consensus(self) -> dict | None:
+        return self._last_consensus
+
     def get_consensus_state(self, log_result: bool = True, enforce_leader: bool = True) -> dict:
         results = self._query_all_nodes("get_state")
 
@@ -125,7 +145,9 @@ class ClusterRpcClient:
         if len(valid) < 2:
             if log_result:
                 emit_event("rpc", f"Quorum indisponivel: apenas {len(valid)}/3 nos ativos", "ERROR")
-            return {"quorum_reached": False, "nodes": results, "state": None, "divergent": []}
+            consensus = {"quorum_reached": False, "nodes": results, "state": None, "divergent": []}
+            self._last_consensus = consensus
+            return consensus
 
         counts = Counter(r["data"]["hash"] for r in valid)
         majority_hash, majority_count = counts.most_common(1)[0]
@@ -133,7 +155,9 @@ class ClusterRpcClient:
         if majority_count < 2:
             if log_result:
                 emit_event("rpc", "Sem consenso 2f+1: todas as respostas divergem", "ERROR")
-            return {"quorum_reached": False, "nodes": results, "state": None, "divergent": []}
+            consensus = {"quorum_reached": False, "nodes": results, "state": None, "divergent": []}
+            self._last_consensus = consensus
+            return consensus
 
         majority_nodes = [r for r in valid if r["data"]["hash"] == majority_hash]
         divergent = [r["node_id"] for r in valid if r["data"]["hash"] != majority_hash]
@@ -155,7 +179,7 @@ class ClusterRpcClient:
         if log_result and not divergent:
             emit_event("rpc", f"Quorum 2f+1 OK ({majority_count}/{len(valid)} votos, hash {majority_hash})")
 
-        return {
+        consensus = {
             "quorum_reached": True,
             "majority_hash": majority_hash,
             "votes": f"{majority_count}/{len(valid)}",
@@ -163,6 +187,8 @@ class ClusterRpcClient:
             "divergent": divergent,
             "nodes": results,
         }
+        self._last_consensus = consensus
+        return consensus
 
     def _demote_and_replace(self, bad_leader_id: int, replacement_id: int) -> None:
         try:
@@ -251,3 +277,27 @@ class ClusterRpcClient:
         emit_event("rpc", f"Falha ao executar {action}: nenhum controlador disponivel", "ERROR")
         return {"ok": False, "error": "CLUSTER_UNAVAILABLE", "command_id": cmd_id}
 
+
+def main() -> None:
+    client = ClusterRpcClient()
+    daemon = Pyro5.api.Daemon(host="localhost", port=CLIENT_PORT)
+    daemon.register(client, "petcare.client")
+    obs_uri = daemon.register(ClientObserver(client.handle_observer_push), "petcare.client.observer")
+    client.set_observer_uri(str(obs_uri))
+    client.register_all_observers()
+    client.get_consensus_state(log_result=False)
+    emit_event("rpc", f"Cliente RPC Pyro5 ativo na porta {CLIENT_PORT} (observer {obs_uri})")
+
+    def shutdown(signum, frame):
+        emit_event("rpc", f"Cliente RPC encerrado (sinal {signum})", "WARN")
+        client.unregister_all_observers()
+        daemon.shutdown()
+        sys.exit(0)
+
+    signal.signal(signal.SIGTERM, shutdown)
+    signal.signal(signal.SIGINT, shutdown)
+    daemon.requestLoop()
+
+
+if __name__ == "__main__":
+    main()

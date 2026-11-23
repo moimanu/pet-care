@@ -6,12 +6,13 @@ import subprocess
 import sys
 import threading
 import time
+from typing import Callable
 
 import paho.mqtt.client as mqtt
+import Pyro5.api
 
-from app.config import ALL_NODES, BASE_PORT, MQTT_HOST, MQTT_PORT
+from app.config import ALL_NODES, BASE_PORT, MQTT_HOST, MQTT_PORT, client_uri
 from app.event_bus import LOG_FILE, add_listener, emit_event
-from app.rpc_client import ClusterRpcClient
 from app.storage import NodeStorage
 
 WEB_DIR = Path("web")
@@ -19,20 +20,34 @@ HOST = "0.0.0.0"
 PORT = 8080
 
 
+@Pyro5.api.expose
+class WebConsensusObserver:
+    """Recebe notificacoes de consenso do processo client via Pyro5."""
+
+    def __init__(self, on_consensus: Callable[[dict], None]) -> None:
+        self._on_consensus = on_consensus
+
+    @Pyro5.api.oneway
+    def on_consensus(self, consensus: dict) -> None:
+        self._on_consensus(consensus)
+
+
 class ProcessManager:
-    """Gerencia os processos reais dos controladores e sensores."""
+    """Gerencia os processos reais dos controladores, sensores e cliente RPC."""
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self.controllers: dict[int, subprocess.Popen] = {}
         self._stopping: set[int] = set()
         self.sensors: subprocess.Popen | None = None
+        self.client: subprocess.Popen | None = None
 
     def start_all(self) -> None:
         for nid in ALL_NODES:
             self.start_controller(nid, primary=(nid == 1))
         time.sleep(1.0)
         self.start_sensors()
+        self.start_client()
 
     def start_controller(self, node_id: int, primary: bool = False) -> bool:
         with self._lock:
@@ -92,7 +107,30 @@ class ProcessManager:
     def is_sensors_alive(self) -> bool:
         return self.sensors is not None and self.sensors.poll() is None
 
+    def start_client(self) -> bool:
+        with self._lock:
+            if self.client and self.client.poll() is None:
+                return False
+            self.client = subprocess.Popen([sys.executable, "-m", "app.client"])
+            return True
+
+    def stop_client(self) -> bool:
+        with self._lock:
+            if not self.client or self.client.poll() is not None:
+                return False
+            self.client.terminate()
+            try:
+                self.client.wait(timeout=3.0)
+            except subprocess.TimeoutExpired:
+                self.client.kill()
+            emit_event("rpc", "Processo do Cliente RPC parado", "WARN")
+            return True
+
+    def is_client_alive(self) -> bool:
+        return self.client is not None and self.client.poll() is None
+
     def stop_all(self) -> None:
+        self.stop_client()
         self.stop_sensors()
         for nid in ALL_NODES:
             self.stop_controller(nid)
@@ -101,17 +139,60 @@ class ProcessManager:
 class AppContext:
     def __init__(self) -> None:
         self.procs = ProcessManager()
-        self.rpc = ClusterRpcClient()
         self.last_consensus: dict | None = None
         self.mqtt_connected = False
         self._sse_cond = threading.Condition()
         self._version = 0
         self._closing = False
+        self._ui_daemon: Pyro5.api.Daemon | None = None
+        self._ui_observer_uri: str | None = None
         add_listener(self.notify_clients)
         self.mqtt = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id="petcare_web_bridge")
         self.mqtt.on_connect = self._on_connect
         self.mqtt.on_disconnect = self._on_disconnect
         self._connect_mqtt()
+
+    def _rpc_proxy(self, timeout: float = 2.0) -> Pyro5.api.Proxy:
+        proxy = Pyro5.api.Proxy(client_uri())
+        proxy._pyroTimeout = timeout
+        return proxy
+
+    def start_ui_observer(self) -> None:
+        self._ui_daemon = Pyro5.api.Daemon(host="localhost", port=0)
+        uri = self._ui_daemon.register(WebConsensusObserver(self.on_consensus_push), "petcare.web.observer")
+        self._ui_observer_uri = str(uri)
+        threading.Thread(target=self._ui_daemon.requestLoop, daemon=True).start()
+        self._register_ui_observer_async()
+
+    def stop_ui_observer(self) -> None:
+        if self._ui_observer_uri:
+            try:
+                with self._rpc_proxy(timeout=1.0) as rpc:
+                    rpc.unregister_ui_observer(self._ui_observer_uri)
+            except Exception:
+                pass
+        if self._ui_daemon is not None:
+            try:
+                self._ui_daemon.shutdown()
+            except Exception:
+                pass
+            self._ui_daemon = None
+
+    def _register_ui_observer_async(self) -> None:
+        def _run() -> None:
+            if not self._ui_observer_uri:
+                return
+            for _ in range(25):
+                try:
+                    with self._rpc_proxy(timeout=1.0) as rpc:
+                        rpc.register_ui_observer(self._ui_observer_uri)
+                        self.last_consensus = rpc.get_consensus_state(log_result=False)
+                        self.notify_clients()
+                        return
+                except Exception:
+                    time.sleep(0.15)
+
+        threading.Thread(target=_run, daemon=True).start()
 
     def notify_clients(self) -> None:
         with self._sse_cond:
@@ -125,10 +206,14 @@ class AppContext:
     def _register_node_async(self, node_id: int) -> None:
         def _run() -> None:
             for _ in range(20):
-                if self.rpc.register_observer_on_node(node_id):
-                    self.last_consensus = self.rpc.get_consensus_state(log_result=False)
-                    self.notify_clients()
-                    return
+                try:
+                    with self._rpc_proxy(timeout=1.0) as rpc:
+                        if rpc.register_observer_on_node(node_id):
+                            self.last_consensus = rpc.get_consensus_state(log_result=False)
+                            self.notify_clients()
+                            return
+                except Exception:
+                    pass
                 time.sleep(0.15)
 
         threading.Thread(target=_run, daemon=True).start()
@@ -149,7 +234,15 @@ class AppContext:
         emit_event("mqtt", "Desconectado do broker Mosquitto", "WARN")
 
     def build_state_payload(self) -> dict:
-        node_map = {n["node_id"]: n for n in self.rpc.get_nodes_status()}
+        node_map: dict[int, dict] = {}
+        try:
+            with self._rpc_proxy(timeout=1.5) as rpc:
+                node_map = {n["node_id"]: n for n in rpc.get_nodes_status()}
+                latest = rpc.get_last_consensus()
+                if latest is not None:
+                    self.last_consensus = latest
+        except Exception:
+            pass
         consensus = self.last_consensus or {}
 
         controllers = []
@@ -174,6 +267,7 @@ class AppContext:
 
         return {
             "clients": {
+                "alive": self.procs.is_client_alive(),
                 "quorum_reached": consensus.get("quorum_reached"),
                 "votes": consensus.get("votes", "--"),
                 "majority_hash": consensus.get("majority_hash"),
@@ -202,18 +296,21 @@ class AppContext:
         op = body.get("op")
 
         if op == "client_command":
-            res = self.rpc.execute_command(str(body["action"]), body.get("command_id"))
-            self.last_consensus = self.rpc.get_consensus_state(log_result=False, enforce_leader=False)
+            with self._rpc_proxy(timeout=4.0) as rpc:
+                res = rpc.execute_command(str(body["action"]), body.get("command_id"))
+                self.last_consensus = rpc.get_consensus_state(log_result=False, enforce_leader=False)
             self.notify_clients()
             return res
 
         if op in ("rpc_quorum", "rpc_read"):
-            self.last_consensus = self.rpc.get_consensus_state(log_result=True)
+            with self._rpc_proxy(timeout=2.5) as rpc:
+                self.last_consensus = rpc.get_consensus_state(log_result=True)
             self.notify_clients()
             return self.last_consensus
 
         if op == "rpc_promote":
-            ok = self.rpc.promote_node(int(body["node_id"]))
+            with self._rpc_proxy(timeout=2.0) as rpc:
+                ok = rpc.promote_node(int(body["node_id"]))
             self.notify_clients()
             return {"ok": ok}
 
@@ -231,7 +328,16 @@ class AppContext:
             return {"ok": ok}
 
         if op == "controller_byzantine":
-            return {"ok": self.rpc.set_byzantine(int(body["node_id"]), bool(body.get("enabled", True)))}
+            with self._rpc_proxy(timeout=2.0) as rpc:
+                return {"ok": rpc.set_byzantine(int(body["node_id"]), bool(body.get("enabled", True)))}
+
+        if op == "client_toggle_proc":
+            if self.procs.is_client_alive():
+                return {"ok": self.procs.stop_client()}
+            ok = self.procs.start_client()
+            if ok:
+                self._register_ui_observer_async()
+            return {"ok": ok}
 
         if op == "storage_mutate":
             nid = int(body["node_id"])
@@ -279,18 +385,21 @@ def make_handler(ctx: AppContext):
         def log_message(self, format, *args):
             return
 
-        def _send_json(self, code: int, data: dict) -> None:
-            raw = json.dumps(data, ensure_ascii=False).encode("utf-8")
-            self.send_response(code)
+        def _send_json(self, status: int, payload: dict) -> None:
+            data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+            self.send_response(status)
             self.send_header("Content-Type", "application/json; charset=utf-8")
-            self.send_header("Content-Length", str(len(raw)))
+            self.send_header("Content-Length", str(len(data)))
             self.end_headers()
-            self.wfile.write(raw)
+            self.wfile.write(data)
 
         def do_GET(self) -> None:
+            if self.path == "/api/state":
+                self._send_json(200, ctx.build_state_payload())
+                return
             if self.path == "/api/events":
                 self.send_response(200)
-                self.send_header("Content-Type", "text/event-stream")
+                self.send_header("Content-Type", "text/event-stream; charset=utf-8")
                 self.send_header("Cache-Control", "no-cache")
                 self.send_header("Connection", "keep-alive")
                 self.end_headers()
@@ -338,9 +447,7 @@ def main() -> None:
 
     ctx = AppContext()
     ctx.procs.start_all()
-    ctx.rpc.start_observer(ctx.on_consensus_push)
-    ctx.last_consensus = ctx.rpc.get_consensus_state(log_result=False)
-    ctx.notify_clients()
+    ctx.start_ui_observer()
     server = ThreadingHTTPServer((HOST, PORT), make_handler(ctx))
     server.daemon_threads = True
     emit_event("clients", f"Servidor web ativo em http://localhost:{PORT}")
@@ -357,7 +464,7 @@ def main() -> None:
     finally:
         ctx._closing = True
         ctx.notify_clients()
-        ctx.rpc.stop_observer()
+        ctx.stop_ui_observer()
         ctx.procs.stop_all()
         ctx.mqtt.loop_stop()
         server.server_close()
@@ -365,4 +472,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

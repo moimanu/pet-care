@@ -11,7 +11,7 @@
 
 ## 1. Tema e Funcionamento Geral
 
-O trabalho implementa um sistema IoT distribuído para monitoramento e cuidado autônomo de animais domésticos (*Smart Pet Care*). O ambiente integra dispositivos de borda (`app/sensors.py`), um broker MQTT Mosquitto, um cluster de três controladores replicados (`app/controller.py`) e um cliente web com comunicação baseada em objetos remotos Pyro5 (`app/rpc_client.py` e `app/web_server.py`).
+O trabalho implementa um sistema IoT distribuído para monitoramento e cuidado autônomo de animais domésticos (*Smart Pet Care*). O ambiente integra dispositivos de borda (`app/sensors.py`), um broker MQTT Mosquitto, um cluster de três controladores replicados (`app/controller.py`) e um cliente web com comunicação baseada em objetos remotos Pyro5 (`app/client.py` e `app/web_server.py`).
 
 Os sensores publicam telemetria no broker MQTT (`QoS 1`) e os atuadores assinam comandos de atuação (`QoS 2`). Os controladores consomem essa telemetria para atualizar o estado do sistema e tomar decisões autônomas, enquanto o cliente monitora o ambiente em tempo real via callbacks remotos (`ClientObserver`) e aciona métodos diretamente nos controladores via Pyro5 RPC.
 

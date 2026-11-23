@@ -1,17 +1,19 @@
-# app/rpc_client.py
+# app/client.py
 
-Módulo cliente RPC Pyro5 responsável por consultar o cluster em paralelo, verificar consenso com quórum bizantino ($2f+1$), gerenciar observadores push e orquestrar failover transparente de líder ao executar comandos.
+Processo cliente RPC Pyro5 independente responsável por consultar o cluster em paralelo, verificar consenso com quórum bizantino ($2f+1$), receber notificações push dos controladores, orquestrar failover transparente de líder e expor seus próprios métodos RPC para observadores (como o painel web).
 
 ```python
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
+import signal
+import sys
 import threading
 from typing import Callable
 import uuid
 
 import Pyro5.api
 
-from app.config import ALL_NODES, peer_uri
+from app.config import ALL_NODES, CLIENT_PORT, peer_uri
 from app.event_bus import emit_event
 
 
@@ -34,27 +36,30 @@ def _proxy(node_id: int, timeout: float = 1.0) -> Pyro5.api.Proxy:
     pass
 
 
+@Pyro5.api.expose
 class ClusterRpcClient:
-    """Cliente Pyro5 RPC com quorum bizantino (2f+1) e failover transparente."""
+    """Processo/servico cliente Pyro5 RPC com quorum bizantino (2f+1) e failover transparente."""
 
     def __init__(self) -> None:
         # Inicializa o estado interno do cliente RPC: último conjunto de nós divergentes,
-        # daemon/URI do observador Pyro5, callback de consenso, lock e timer de debounce.
+        # último consenso calculado, URI do observador, conjunto de observadores de UI, locks e timer de debounce.
         pass
 
-    def start_observer(
-        self,
-        on_consensus_update: Callable[[dict], None],
-        host: str = "localhost",
-        port: int = 0,
-    ) -> str:
-        # Inicia um `Pyro5.api.Daemon` em thread daemon expondo `ClientObserver`, registra a URI
-        # em todos os nós do cluster e retorna a URI gerada.
+    def set_observer_uri(self, uri: str) -> None:
+        # Armazena a URI Pyro5 do `ClientObserver` registrado no daemon deste processo.
         pass
 
-    def stop_observer(self) -> None:
-        # Cancela qualquer timer de debounce pendente, remove o registro do observador em todos os nós
-        # e encerra o daemon Pyro5 local com segurança.
+    def register_ui_observer(self, ui_uri: str) -> bool:
+        # Registra a URI de um observador externo (ex: `web_server.py`) para receber notificações push de consenso.
+        pass
+
+    def unregister_ui_observer(self, ui_uri: str) -> bool:
+        # Remove o registro de um observador externo da lista de notificações de consenso.
+        pass
+
+    def _notify_ui_observers(self, consensus: dict) -> None:
+        # Envia o consenso atualizado em thread separada para todos os observadores de UI registrados,
+        # descartando URIs inacessíveis.
         pass
 
     def register_observer_on_node(self, node_id: int) -> bool:
@@ -65,13 +70,17 @@ class ClusterRpcClient:
         # Registra a URI do observador em todos os nós do cluster em paralelo usando `ThreadPoolExecutor`.
         pass
 
-    def _handle_observer_push(self, payload: dict) -> None:
+    def unregister_all_observers(self) -> None:
+        # Cancela o timer de debounce pendente e remove o registro do observador em todos os nós do cluster.
+        pass
+
+    def handle_observer_push(self, payload: dict) -> None:
         # Aplica debounce (80ms) às notificações push recebidas para agrupar atualizações simultâneas
         # de múltiplas réplicas antes de disparar a reavaliação de consenso.
         pass
 
     def _evaluate_consensus(self) -> None:
-        # Reavalia o estado de consenso do cluster sem gerar logs redundantes e repassa o resultado ao callback registrado.
+        # Reavalia o estado de consenso do cluster sem gerar logs redundantes e notifica os observadores de UI.
         pass
 
     def _query_all_nodes(self, method: str) -> list[dict]:
@@ -83,12 +92,16 @@ class ClusterRpcClient:
         # Consulta o status de saúde (`ping`) de todos os nós do cluster em paralelo.
         pass
 
+    def get_last_consensus(self) -> dict | None:
+        # Retorna o último dicionário de consenso calculado em memória.
+        pass
+
     def get_consensus_state(self, log_result: bool = True, enforce_leader: bool = True) -> dict:
         # 1. Consulta `get_state` em todos os nós e exige ao menos 2 respostas válidas (quórum 2f+1 para f=1).
         # 2. Conta a frequência dos hashes canônicos; se a maioria for menor que 2, reporta ausência de consenso.
         # 3. Identifica nós divergentes em relação ao hash majoritário e, se `enforce_leader` estiver ativo
         #    e o líder estiver divergente, aciona `_demote_and_replace` para substituí-lo.
-        # 4. Retorna o dicionário consolidado de consenso com votos, hash majoritário, estado e lista de divergentes.
+        # 4. Armazena em `_last_consensus` e retorna o dicionário consolidado de consenso.
         pass
 
     def _demote_and_replace(self, bad_leader_id: int, replacement_id: int) -> None:
@@ -118,5 +131,15 @@ class ClusterRpcClient:
         # 3. Em caso de recusa (ex: falha bizantina ou não-líder) ou erro de rede, promove outro nó candidato
         #    e realiza failover transparente preservando o mesmo `command_id` para garantir idempotência.
         pass
-```
 
+
+def main() -> None:
+    # 1. Instancia `ClusterRpcClient` e sobe um `Pyro5.api.Daemon` na porta `CLIENT_PORT` (9094).
+    # 2. Registra `petcare.client` e `petcare.client.observer`, inscreve-se nos controladores e avalia o consenso inicial.
+    # 3. Configura handlers para SIGTERM/SIGINT e entra em `daemon.requestLoop()`.
+    pass
+
+
+if __name__ == "__main__":
+    main()
+```
