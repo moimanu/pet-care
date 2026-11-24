@@ -1,11 +1,77 @@
+"""Regras de negocio puras e especificacao de protocolos do Pet Care (sem rede ou banco)."""
+
 from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timezone
+from enum import StrEnum
 import hashlib
 import json
+from typing import Any, Callable
 
-SENSOR_LIMITS = {
-    "racao": ("nivel_gramas", 0.0, 500.0),
-    "agua": ("nivel_ml", 0.0, 1000.0),
+from app.config import TOPIC_ACTUATORS
+
+MAX_FOOD_GRAMS = 500.0
+FOOD_STEP_GRAMS = 50.0
+MAX_WATER_ML = 1000.0
+WATER_STEP_ML = 200.0
+
+
+class Sensor(StrEnum):
+    RACAO = "racao"
+    AGUA = "agua"
+    AREIA = "areia"
+    FUGA = "fuga"
+
+
+class Perimeter(StrEnum):
+    DENTRO = "DENTRO"
+    FORA = "FORA"
+
+
+class Action(StrEnum):
+    LIBERAR_RACAO = "LIBERAR_RACAO"
+    REPOR_AGUA = "REPOR_AGUA"
+    RESETAR_AREIA = "RESETAR_AREIA"
+    DISPARAR_ALARME = "DISPARAR_ALARME"
+    SILENCIAR_ALARME = "SILENCIAR_ALARME"
+
+
+class RpcError(StrEnum):
+    NO_QUORUM = "NO_QUORUM"
+    NOT_PRIMARY = "NOT_PRIMARY"
+    BYZANTINE_FAULT = "BYZANTINE_FAULT"
+    CLUSTER_UNAVAILABLE = "CLUSTER_UNAVAILABLE"
+
+
+def _bounded_float(low: float, high: float) -> Callable[[Any, str], float]:
+    def _parse(val: Any, field: str) -> float:
+        if isinstance(val, bool) or not isinstance(val, (int, float)):
+            raise ValueError(f"Campo '{field}' invalido: {val}")
+        num = float(val)
+        if not (low <= num <= high):
+            raise ValueError(f"Valor fora dos limites [{low}, {high}]: {num}")
+        return num
+
+    return _parse
+
+
+def _non_negative_int(val: Any, field: str) -> int:
+    if isinstance(val, bool) or not isinstance(val, int) or val < 0:
+        raise ValueError(f"Campo '{field}' invalido: {val}")
+    return val
+
+
+def _perimeter_str(val: Any, field: str) -> str:
+    if not isinstance(val, str) or val not in Perimeter:
+        raise ValueError(f"Campo '{field}' invalido: {val}")
+    return str(val)
+
+
+# Mapa declarativo: sensor -> (campo_payload_mqtt, atributo_PetState, validador)
+SENSOR_SPECS: dict[str, tuple[str, str, Callable[[Any, str], Any]]] = {
+    Sensor.RACAO: ("nivel_gramas", "racao_gramas", _bounded_float(0.0, MAX_FOOD_GRAMS)),
+    Sensor.AGUA: ("nivel_ml", "agua_ml", _bounded_float(0.0, MAX_WATER_ML)),
+    Sensor.AREIA: ("usos_acumulados", "areia_usos", _non_negative_int),
+    Sensor.FUGA: ("perimetro", "status_fuga", _perimeter_str),
 }
 
 
@@ -15,10 +81,12 @@ def utc_now_iso() -> str:
 
 @dataclass
 class PetState:
+    """Estado canonico compartilhado entre todas as replicas do cluster."""
+
     racao_gramas: float = 250.0
     agua_ml: float = 500.0
     areia_usos: int = 0
-    status_fuga: str = "DENTRO"
+    status_fuga: str = str(Perimeter.DENTRO)
     alarme_ativo: bool = False
     atualizado_em: str = ""
 
@@ -41,82 +109,59 @@ class PetState:
         )
 
     def canonical_hash(self) -> str:
-        """Hash do estado (sem o timestamp), usado para comparar replicas."""
+        """Hash deterministico do estado (ignora timestamp) para consenso 2f+1."""
         core = {**self.to_dict(), "racao_gramas": round(self.racao_gramas, 2), "agua_ml": round(self.agua_ml, 2)}
         del core["atualizado_em"]
-        raw = json.dumps(core, sort_keys=True).encode("utf-8")
-        return hashlib.sha256(raw).hexdigest()[:12]
+        return hashlib.sha256(json.dumps(core, sort_keys=True).encode("utf-8")).hexdigest()[:12]
 
 
 def validate_telemetry(sensor: str, payload: dict) -> dict:
+    """Valida e normaliza uma leitura de telemetria segundo `SENSOR_SPECS`."""
     if not isinstance(payload, dict):
         raise ValueError("Payload deve ser um objeto JSON")
-
-    if sensor in SENSOR_LIMITS:
-        field, low, high = SENSOR_LIMITS[sensor]
-        val = payload.get(field)
-        if isinstance(val, bool) or not isinstance(val, (int, float)):
-            raise ValueError(f"Campo '{field}' invalido: {val}")
-        num = float(val)
-        if not (low <= num <= high):
-            raise ValueError(f"Valor fora dos limites [{low}, {high}]: {num}")
-        return {field: num}
-
-    if sensor == "areia":
-        val = payload.get("usos_acumulados")
-        if isinstance(val, bool) or not isinstance(val, int) or val < 0:
-            raise ValueError(f"Campo 'usos_acumulados' invalido: {val}")
-        return {"usos_acumulados": val}
-
-    if sensor == "fuga":
-        val = payload.get("perimetro")
-        if val not in ("DENTRO", "FORA"):
-            raise ValueError(f"Campo 'perimetro' invalido: {val}")
-        return {"perimetro": val}
-
-    raise ValueError(f"Sensor desconhecido: {sensor}")
+    spec = SENSOR_SPECS.get(sensor)
+    if spec is None:
+        raise ValueError(f"Sensor desconhecido: {sensor}")
+    payload_field, _, validator = spec
+    return {payload_field: validator(payload.get(payload_field), payload_field)}
 
 
-def _actuator(topic: str, **payload) -> dict:
-    return {"topic": f"petcare/atuadores/{topic}", "payload": payload}
+def _actuator(target: str, acao: Action | str, **extra) -> dict:
+    return {"topic": f"{TOPIC_ACTUATORS}/{target}", "payload": {"acao": str(acao), **extra}}
 
 
 def apply_telemetry(state: PetState, sensor: str, payload: dict) -> tuple[PetState, list[dict]]:
+    """Aplica telemetria validada e retorna (novo_estado, comandos_de_atuadores)."""
     clean = validate_telemetry(sensor, payload)
-    nxt = replace(state, atualizado_em=utc_now_iso())
+    payload_field, state_attr, _ = SENSOR_SPECS[sensor]
+    next_state = replace(state, **{state_attr: clean[payload_field], "atualizado_em": utc_now_iso()})
     actuators: list[dict] = []
 
-    if sensor == "racao":
-        nxt.racao_gramas = clean["nivel_gramas"]
-    elif sensor == "agua":
-        nxt.agua_ml = clean["nivel_ml"]
-    elif sensor == "areia":
-        nxt.areia_usos = clean["usos_acumulados"]
-    elif sensor == "fuga":
-        nxt.status_fuga = clean["perimetro"]
-        if nxt.status_fuga == "FORA":
-            nxt.alarme_ativo = True
-            actuators.append(_actuator("alarme", acao="DISPARAR_ALARME", motivo="FUGA_DETECTADA"))
+    if sensor == Sensor.FUGA and next_state.status_fuga == Perimeter.FORA:
+        next_state.alarme_ativo = True
+        actuators.append(_actuator("alarme", Action.DISPARAR_ALARME, motivo="FUGA_DETECTADA"))
 
-    return nxt, actuators
+    return next_state, actuators
 
 
 def apply_command(state: PetState, action: str) -> tuple[PetState, list[dict]]:
-    nxt = replace(state, atualizado_em=utc_now_iso())
+    """Aplica um comando RPC ao estado e retorna (novo_estado, comandos_de_atuadores)."""
+    next_state = replace(state, atualizado_em=utc_now_iso())
     actuators: list[dict] = []
 
-    if action == "LIBERAR_RACAO":
-        nxt.racao_gramas = min(500.0, nxt.racao_gramas + 50.0)
-        actuators.append(_actuator("dispenser", acao=action, quantidade_gramas=50.0))
-    elif action == "REPOR_AGUA":
-        nxt.agua_ml = min(1000.0, nxt.agua_ml + 200.0)
-        actuators.append(_actuator("valvula", acao=action, quantidade_ml=200.0))
-    elif action == "RESETAR_AREIA":
-        nxt.areia_usos = 0
-    elif action == "SILENCIAR_ALARME":
-        nxt.alarme_ativo = False
-        actuators.append(_actuator("alarme", acao=action))
-    else:
-        raise ValueError(f"Comando desconhecido: {action}")
+    match action:
+        case Action.LIBERAR_RACAO:
+            next_state.racao_gramas = min(MAX_FOOD_GRAMS, next_state.racao_gramas + FOOD_STEP_GRAMS)
+            actuators.append(_actuator("dispenser", action, quantidade_gramas=FOOD_STEP_GRAMS))
+        case Action.REPOR_AGUA:
+            next_state.agua_ml = min(MAX_WATER_ML, next_state.agua_ml + WATER_STEP_ML)
+            actuators.append(_actuator("valvula", action, quantidade_ml=WATER_STEP_ML))
+        case Action.RESETAR_AREIA:
+            next_state.areia_usos = 0
+        case Action.SILENCIAR_ALARME:
+            next_state.alarme_ativo = False
+            actuators.append(_actuator("alarme", action))
+        case _:
+            raise ValueError(f"Comando desconhecido: {action}")
 
-    return nxt, actuators
+    return next_state, actuators

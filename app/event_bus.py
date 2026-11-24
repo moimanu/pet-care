@@ -1,3 +1,6 @@
+"""Barramento simples de logs estruturados (JSONL) com notificacao para listeners em memoria."""
+
+from contextlib import suppress
 from datetime import datetime
 import json
 from pathlib import Path
@@ -9,10 +12,10 @@ _listeners_lock = threading.Lock()
 _listeners: list[Callable[[], None]] = []
 
 
-def add_listener(fn: Callable[[], None]) -> None:
+def add_listener(listener: Callable[[], None]) -> None:
     with _listeners_lock:
-        if fn not in _listeners:
-            _listeners.append(fn)
+        if listener not in _listeners:
+            _listeners.append(listener)
 
 
 def emit_event(component: str, message: str, level: str = "INFO") -> None:
@@ -23,15 +26,12 @@ def emit_event(component: str, message: str, level: str = "INFO") -> None:
         "level": level,
         "message": message,
     }
-    line = json.dumps(entry, ensure_ascii=False)
     with LOG_FILE.open("a", encoding="utf-8") as fh:
-        fh.write(line + "\n")
+        fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
     print(f"[{entry['ts']}] [{component}] [{level}] {message}", flush=True)
+
     with _listeners_lock:
         listeners = list(_listeners)
-    for fn in listeners:
-        try:
-            fn()
-        except Exception:
-            pass
-
+    for listener in listeners:
+        with suppress(Exception):
+            listener()
