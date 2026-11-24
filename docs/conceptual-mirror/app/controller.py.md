@@ -61,14 +61,15 @@ class PetController:
 
     def _catch_up_from_peers(self) -> None:
         """Ao subir ou se recuperar, sincroniza o SQLite com o lider ativo do cluster."""
-        # Procura um líder ativo entre os pares sondados; ao encontrá-lo, assume papel de réplica,
+        # Procura um líder ativo e não-bizantino entre os pares sondados; ao encontrá-lo, assume papel de réplica,
         # obtém `get_state()` remoto e persiste o estado no SQLite local.
         pass
 
     def _maybe_elect_self(self) -> bool:
-        """Eleicao deterministica P2P: sem lider ativo, o menor node_id vivo assume."""
-        # Verifica se há algum líder ativo entre os pares; se não houver e este nó possuir o menor ID
-        # entre os nós vivos, promove-se a líder (failover P2P determinístico).
+        """Eleicao deterministica P2P: sem lider saudavel ativo, o menor node_id nao-bizantino assume."""
+        # Verifica se há algum líder não-bizantino ativo entre os pares; se não houver e este nó possuir
+        # o menor ID entre os nós saudáveis, rebaixa eventual líder bizantino (`set_primary(False)`)
+        # e promove-se a líder (failover P2P determinístico).
         pass
 
     def _commit_and_replicate(
@@ -112,7 +113,7 @@ class PetController:
 
     def set_byzantine(self, flag: bool) -> bool:
         # Ativa ou desativa o modo bizantino sob lock; ao desativar, executa catch-up a partir dos pares
-        # para restaurar o estado legítimo e notifica os observadores sobre a mudança.
+        # para restaurar o estado legítimo. Não notifica observadores para que o quórum seja avaliado apenas sob demanda.
         pass
 
     def sync_state(self, state_dict: dict, command_id: str | None = None, kind: str = "SYNC", payload: str = "{}") -> bool:

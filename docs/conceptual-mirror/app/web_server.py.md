@@ -87,7 +87,8 @@ class AppContext:
     def dispatch_action(self, body: dict) -> dict:
         # Roteia ações vindas da API POST `/api/action` para o componente adequado:
         # encaminha comandos RPC e consultas ao `app.client`, gerencia start/stop de processos
-        # (controladores, sensores e cliente), mutação direta em SQLite e publicação/controle MQTT.
+        # (controladores, sensores e cliente), alternância de modo bizantino (notificando clientes SSE
+        # sem recalcular quórum), mutação direta em SQLite e publicação/controle MQTT.
         pass
 
 
