@@ -1,6 +1,6 @@
 # app/storage.py
 
-Módulo de persistência local em SQLite por réplica, responsável por armazenar o estado único do pet (`pet_state`) e o histórico idempotente de comandos/eventos (`event_log`).
+Módulo de persistência local em SQLite por réplica, responsável por armazenar o estado único do pet (`pet_state`) e o histórico idempotente de comandos/eventos (`event_log`) na mesma transação.
 
 ```python
 import sqlite3
@@ -8,10 +8,11 @@ import sqlite3
 from app.domain import PetState, utc_now_iso
 
 STATE_COLUMNS = ("racao_gramas", "agua_ml", "areia_usos", "status_fuga", "alarme_ativo", "atualizado_em")
+EDITABLE_COLUMNS = set(STATE_COLUMNS[:-1])
 
 
 class NodeStorage:
-    """Persistencia local SQLite por replica (pet_state + event_log)."""
+    """Encapsula o banco SQLite isolado de um controlador."""
 
     def __init__(self, db_path: str) -> None:
         # Armazena o caminho do arquivo SQLite da réplica e inicializa o schema do banco de dados.
@@ -31,19 +32,15 @@ class NodeStorage:
         # Consulta a linha única (id=1) da tabela `pet_state` e reconstrói o objeto `PetState` correspondente.
         pass
 
-    def save_state(self, state: PetState) -> None:
-        # Atualiza todas as colunas definidas em `STATE_COLUMNS` na linha única da tabela `pet_state`
-        # com os valores serializados do estado informado.
+    def save_state(self, state: PetState, event: tuple[str, str, str] | None = None) -> None:
+        # Atualiza todas as colunas de `STATE_COLUMNS` na linha única da tabela `pet_state` e,
+        # caso `event` `(command_id, kind, payload)` seja fornecido, insere o registro em `event_log`
+        # na mesma transação (com `INSERT OR IGNORE`) para garantir atomicidade e idempotência.
         pass
 
     def has_event(self, command_id: str) -> bool:
         # Verifica na tabela `event_log` se já existe um registro para o `command_id` informado,
         # servindo de base para a garantia de idempotência no processamento de comandos.
-        pass
-
-    def record_event(self, command_id: str, kind: str, payload: str) -> None:
-        # Registra um comando ou evento de telemetria no `event_log` com timestamp UTC atual,
-        # ignorando inserções duplicadas pelo mesmo `command_id`.
         pass
 
     def get_snapshot(self) -> dict:
@@ -52,8 +49,7 @@ class NodeStorage:
         pass
 
     def update_field_directly(self, field: str, value) -> dict:
-        # Valida se o campo pertence às colunas editáveis de estado e executa um UPDATE direto no SQLite,
+        # Valida se o campo pertence a `EDITABLE_COLUMNS` e executa um UPDATE direto no SQLite,
         # permitindo simular corrupção ou divergência manual de dados em uma réplica específica.
         pass
 ```
-

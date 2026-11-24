@@ -3,6 +3,7 @@
 Módulo de barramento de eventos e logging estruturado responsável por registrar acontecimentos em arquivo JSONL, exibi-los no console e notificar listeners em memória (como o servidor SSE).
 
 ```python
+from contextlib import suppress
 from datetime import datetime
 import json
 from pathlib import Path
@@ -14,7 +15,7 @@ _listeners_lock = threading.Lock()
 _listeners: list[Callable[[], None]] = []
 
 
-def add_listener(fn: Callable[[], None]) -> None:
+def add_listener(listener: Callable[[], None]) -> None:
     # Registra uma função de callback de forma thread-safe na lista global de observadores,
     # evitando duplicatas para que seja acionada sempre que um novo evento for emitido.
     pass
@@ -26,4 +27,3 @@ def emit_event(component: str, message: str, level: str = "INFO") -> None:
     # 3. Obtém uma cópia thread-safe dos listeners registrados e invoca cada callback isolando eventuais exceções.
     pass
 ```
-
