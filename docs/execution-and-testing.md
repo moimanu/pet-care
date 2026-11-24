@@ -17,7 +17,7 @@ pip install -r requirements.txt
 
 ## 2. Inicialização Automática
 
-O script `scripts/start_system.sh` sobe o container Mosquitto via Docker Compose e inicia o `app.web_server`, que orquestra automaticamente os 3 processos de controladores (`app.controller`) e o processo de dispositivos IoT (`app.sensors`):
+O script `scripts/start_system.sh` sobe o container Mosquitto via Docker Compose e inicia o `app.web_server`, que orquestra automaticamente os 3 processos de controladores (`app.controller`), o processo de dispositivos IoT (`app.sensors`) e o processo do cliente RPC (`app.client`):
 
 ```bash
 ./scripts/start_system.sh
@@ -51,7 +51,10 @@ docker compose up -d mosquitto
 # 3. Dispositivos IoT de Borda (Sensores e Atuadores)
 .venv/bin/python -m app.sensors
 
-# 4. Servidor Web + Cliente RPC (gerencia ou conecta-se aos nos existentes)
+# 4. Cliente RPC Pyro5 (porta 9094)
+.venv/bin/python -m app.client
+
+# 5. Servidor Web HTTP/SSE (porta 8080; gerencia ou conecta-se aos processos existentes)
 .venv/bin/python -m app.web_server
 ```
 
@@ -72,7 +75,7 @@ O painel web apresenta a arquitetura em tempo real via Server-Sent Events (`/api
 1. No card **Sensores**, envie valores individuais (`Ração (g)`, `Água (ml)`, `Areia`) ou ative o ciclo contínuo clicando em **Auto ON**.
 2. Para testar a tomada de decisão autônoma crítica, selecione `FORA` no seletor de perímetro e clique em **Fuga**:
    * O sensor publica `{"perimetro": "FORA"}` em `petcare/sensores/fuga` (`QoS 1`).
-   * O Líder detecta a violação, ativa `alarme_ativo = True`, publica `DISPARAR_ALARME` em `petcare/atuadores/alarme` (`QoS 2`), replica o estado aos pares e notifica o cliente via callback Pyro5 (`ClientObserver`).
+   * O Líder detecta a violação, ativa `alarme_ativo = True`, publica `DISPARAR_ALARME` em `petcare/atuadores/alarme` (`QoS 2`), replica o estado aos pares e notifica o cliente RPC via callback Pyro5 (`PushReceiver`), que repassa o consenso atualizado ao painel web.
 
 ### 4.3. Tolerância a Falhas Crash-Stop e Failover (`Controladores`)
 

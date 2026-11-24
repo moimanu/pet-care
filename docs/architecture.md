@@ -6,7 +6,9 @@
 
 ```mermaid
 flowchart LR
-    CLI["Cliente / Painel Web\n(app/web_server.py + app/client.py)\n- ClusterRpcClient & ClientObserver\n- Quorum Bizantino (2f+1)\n- Idempotencia UUID"]
+    WEB["Painel Web / Ponte HTTP-SSE\n(app/web_server.py - Porta 8080)\n- HTTP /api/action & SSE /api/events\n- PushReceiver (petcare.web.observer)\n- ProcessManager (app/process_manager.py)"]
+
+    CLI["Cliente RPC Pyro5\n(app/client.py - Porta 9094)\n- ClusterRpcClient (petcare.client)\n- PushReceiver (petcare.client.observer)\n- Quorum Bizantino (2f+1) & Idempotencia UUID"]
 
     subgraph MIDDLEWARE["MIDDLEWARE (Infraestrutura Distribuida)"]
         direction TB
@@ -22,6 +24,8 @@ flowchart LR
     MQTT["Broker MQTT (Mosquitto)\n(Porta 1883 TCP)"]
 
     IOT["Dispositivos IoT de Borda\n(app/sensors.py - IoTDeviceNode)\n- Sensores: Racao, Agua, Areia, Fuga\n- Atuadores: Dispenser, Valvula, Alarme\n- Deduplicacao (janela de 2s)"]
+
+    WEB <-->|"Pyro5 RPC + Push Observer"| CLI
 
     CLI <-->|"Pyro5 RPC + Push Observer"| C1
     CLI <-->|"Pyro5 RPC + Push Observer"| C2
@@ -40,7 +44,8 @@ flowchart LR
 
 | Componente | Protocolo | Endereço | Objeto Pyro5 / Recurso |
 | :--- | :--- | :--- | :--- |
-| **Servidor Web / Cliente RPC** | HTTP / SSE / Pyro5 | `localhost:8080` (HTTP) / Porta efêmera (Pyro5) | `petcare.client.observer` (`ClientObserver`) |
+| **Servidor Web (Ponte HTTP/SSE)** | HTTP / SSE / Pyro5 | `localhost:8080` (HTTP) / Porta efêmera (Pyro5) | `petcare.web.observer` (`PushReceiver`) |
+| **Cliente RPC Pyro5** | TCP / Pyro5 RPC | `localhost:9094` | `petcare.client` (`ClusterRpcClient`) e `petcare.client.observer` (`PushReceiver`) |
 | **Broker MQTT (Mosquitto)** | TCP / MQTT | `localhost:1883` | N/A |
 | **Controlador 1** | TCP / Pyro5 RPC | `localhost:9091` | `petcare.controller.1` (`PetController`) |
 | **Controlador 2** | TCP / Pyro5 RPC | `localhost:9092` | `petcare.controller.2` (`PetController`) |
@@ -93,9 +98,16 @@ Publicados pelo Controlador Líder e assinados pelos dispositivos de borda (`pet
 * `set_byzantine(flag) -> bool`: Ativa/desativa simulação de falha bizantina (quando desativada, executa catch-up imediato a partir do Líder).
 * `register_observer(client_uri)` / `unregister_observer(client_uri)`: Gerencia clientes inscritos para notificações push.
 
-### 4.2. `ClientObserver` (`petcare.client.observer`)
+### 4.2. `ClusterRpcClient` (`petcare.client`) e `PushReceiver` (`petcare.client.observer` / `petcare.web.observer`)
 
-* `on_state_changed(payload)` (`@Pyro5.api.oneway`): Callback remoto invocado assincronamente pelos controladores a cada mudança de estado, disparando reavaliação de quórum com debounce de `80ms`.
+* **Métodos expostos por `ClusterRpcClient` (`localhost:9094`):**
+  * `get_nodes_status()` / `get_last_consensus()` / `get_consensus_state(log_result=True, enforce_leader=True)`: Consulta os nós em paralelo, apura o quórum $2f+1$ e destitui líder divergente se necessário.
+  * `execute_command(action, command_id=None)`: Pré-valida o quórum $2f+1$, localiza ou elege o Líder e executa o comando com failover transparente mantendo o mesmo `command_id`.
+  * `promote_node(target_id)` / `set_byzantine(target_id, flag)`: Controla liderança e simulação bizantina nos controladores.
+  * `register_observer_on_node(node_id)` / `register_ui_observer(ui_uri)` / `unregister_ui_observer(ui_uri)`: Gerencia inscrições de push entre controladores, cliente RPC e painel web.
+* **Notificação push via `PushReceiver.on_push(payload)` (`@Pyro5.api.oneway`):**
+  * `petcare.client.observer` recebe notificações dos controladores e aplica *debounce* de `80ms` antes de reavaliar o consenso.
+  * `petcare.web.observer` recebe o resultado do consenso empurrado pelo `ClusterRpcClient` para atualizar o stream SSE do painel web.
 
 ---
 
@@ -122,7 +134,7 @@ CREATE TABLE IF NOT EXISTS event_log (
 );
 ```
 
-O hash canônico (`PetState.canonical_hash()`) é calculado com `SHA-256` (truncado em 12 hexadecimais) sobre o JSON ordenado dos campos de estado (`racao_gramas`, `agua_ml`, `areia_usos`, `status_fuga`, `alarme_ativo`), excluindo `atualizado_em` para garantir comparação determinística entre réplicas.
+O hash canônico (`PetState.canonical_hash()`) é calculado com `SHA-256` (truncado em 12 hexadecimais) sobre o JSON ordenado dos campos de estado (`racao_gramas` e `agua_ml` arredondados para 2 casas decimais, `areia_usos`, `status_fuga`, `alarme_ativo`), excluindo `atualizado_em` para garantir comparação determinística entre réplicas.
 
 ---
 
@@ -131,22 +143,24 @@ O hash canônico (`PetState.canonical_hash()`) é calculado com `SHA-256` (trunc
 ```text
 .
 ├── app/
-│   ├── config.py       # Constantes de cluster (ALL_NODES, BASE_PORT=9090, MQTT_HOST/PORT) e peer_uri()
-│   ├── domain.py       # Entidade PetState, hash canonico, validacao fisica e regras de transicao
-│   ├── storage.py      # Persistencia SQLite por replica (NodeStorage: pet_state + event_log)
-│   ├── controller.py   # Processo Pyro5 do controlador, consumidor/produtor MQTT, sync e failover P2P
-│   ├── client.py   # ClusterRpcClient (quorum 2f+1, failover RPC, destituicao de lider) e ClientObserver
-│   ├── sensors.py      # Processo IoT de borda (IoTDeviceNode: sensores, atuadores e deduplicacao)
-│   ├── event_bus.py    # Barramento de logs estruturados em JSONL (logs/events.jsonl)
-│   └── web_server.py   # Servidor HTTP/SSE (:8080), API /api/action e orquestrador ProcessManager
+│   ├── config.py          # Constantes de cluster (ALL_NODES, BASE_PORT=9090, CLIENT_PORT=9094, MQTT_HOST/PORT)
+│   ├── domain.py          # Entidade PetState, hash canonico, validacao fisica e regras de transicao
+│   ├── storage.py         # Persistencia SQLite por replica (NodeStorage: pet_state + event_log)
+│   ├── infra.py           # Utilitarios compartilhados: Pyro5 (rpc_proxy, PushReceiver, ObserverRegistry), MQTT e sinais
+│   ├── process_manager.py # Orquestracao de subprocessos (controladores, sensors e client)
+│   ├── controller.py      # Processo Pyro5 do controlador, consumidor/produtor MQTT, sync e failover P2P
+│   ├── client.py          # Processo Pyro5 do cliente RPC (:9094): quorum 2f+1, failover RPC e push UI
+│   ├── sensors.py         # Processo IoT de borda (IoTDeviceNode: sensores, atuadores e deduplicacao)
+│   ├── event_bus.py       # Barramento de logs estruturados em JSONL (logs/events.jsonl)
+│   └── web_server.py      # Servidor HTTP/SSE (:8080), API /api/action e ponte com client, SQLite e MQTT
 ├── web/
-│   ├── index.html      # Fluxograma interativo em board infinito
-│   ├── style.css       # Estilos da interface web
-│   └── app.js          # Renderizacao SVG das arestas, cliente SSE e despacho de acoes
+│   ├── index.html         # Fluxograma interativo em board infinito
+│   ├── style.css          # Estilos da interface web
+│   └── app.js             # Renderizacao SVG das arestas, cliente SSE e despacho de acoes
 ├── scripts/
-│   └── start_system.sh # Script de inicializacao (Mosquitto + web_server + subprocessos)
-├── docker-compose.yml  # Container Eclipse Mosquitto 2 (:1883)
-├── mosquitto.conf      # Configuracao do broker MQTT
-└── requirements.txt    # Dependencias Python (paho-mqtt, Pyro5)
+│   └── start_system.sh    # Script de inicializacao (Mosquitto + web_server + subprocessos)
+├── docker-compose.yml     # Container Eclipse Mosquitto 2 (:1883)
+├── mosquitto.conf         # Configuracao do broker MQTT
+└── requirements.txt       # Dependencias Python (paho-mqtt, Pyro5)
 ```
 
