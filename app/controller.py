@@ -82,7 +82,7 @@ class PetController:
     def _catch_up_from_peers(self) -> None:
         """Ao subir ou se recuperar, sincroniza o SQLite com o lider ativo do cluster."""
         for peer_id, info in self._probe_peers().items():
-            if not info.get("is_primary"):
+            if not info.get("is_primary") or info.get("byzantine"):
                 continue
             with suppress_rpc_errors():
                 with rpc_proxy(peer_uri(peer_id)) as proxy:
@@ -93,13 +93,19 @@ class PetController:
                 return
 
     def _maybe_elect_self(self) -> bool:
-        """Eleicao deterministica P2P: sem lider ativo, o menor node_id vivo assume."""
+        """Eleicao deterministica P2P: sem lider saudavel ativo, o menor node_id nao-bizantino assume."""
         alive_peers = self._probe_peers()
-        if any(info.get("is_primary") for info in alive_peers.values()):
+        healthy_peers = {pid: info for pid, info in alive_peers.items() if not info.get("byzantine")}
+        if any(info.get("is_primary") for info in healthy_peers.values()):
             return False
-        if min([self.node_id, *alive_peers.keys()]) == self.node_id:
+        if min([self.node_id, *healthy_peers.keys()]) == self.node_id:
+            for peer_id, info in alive_peers.items():
+                if info.get("is_primary") and info.get("byzantine"):
+                    with suppress_rpc_errors():
+                        with rpc_proxy(peer_uri(peer_id)) as proxy:
+                            proxy.set_primary(False)
             self.is_primary = True
-            self._log(f"Failover P2P: nenhum lider ativo; No {self.node_id} assumiu lideranca", "WARN")
+            self._log(f"Failover P2P: nenhum lider saudavel ativo; No {self.node_id} assumiu lideranca", "WARN")
             return True
         return False
 
@@ -183,7 +189,6 @@ class PetController:
             else:
                 self._log(f"Modo BIZANTINO desativado: No {self.node_id} restaurado", "WARN")
                 self._catch_up_from_peers()
-            self._notify_observers(self._visible_state(), "BYZANTINE_TOGGLE")
             return self.byzantine
 
     def sync_state(self, state_dict: dict, command_id: str | None = None, kind: str = "SYNC", payload: str = "{}") -> bool:

@@ -188,7 +188,9 @@ class AppContext:
                 return {"ok": ok}
             case "controller_byzantine":
                 with self._client_rpc(2.0) as rpc:
-                    return {"ok": rpc.set_byzantine(int(body["node_id"]), bool(body.get("enabled", True)))}
+                    ok = rpc.set_byzantine(int(body["node_id"]), bool(body.get("enabled", True)))
+                self.notify_clients()
+                return {"ok": ok}
             case "client_toggle_proc":
                 if self.procs.is_alive("client"):
                     return {"ok": self.procs.stop_service("client")}
