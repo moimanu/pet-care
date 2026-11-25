@@ -81,8 +81,8 @@ O painel web apresenta a arquitetura em tempo real via Server-Sent Events (`/api
 
 1. Identifique o controlador marcado como `(LIDER)` (por padrão, **Controlador 1**) e clique em **Parar Processo**.
 2. Envie um comando pelo card **Clientes** ou publique telemetria pelo card **Sensores**:
-   * **Via Telemetria MQTT (Failover P2P):** As réplicas ativas detectam a ausência de líder via `ping()` P2P e o nó ativo de menor ID (`_maybe_elect_self`) assume automaticamente a liderança.
-   * **Via Comando RPC (Failover Transparente):** O `ClusterRpcClient` detecta a falha de conexão com o líder antigo, promove a primeira réplica ativa disponível e conclui a execução do método com sucesso (`2/2` votos no quórum).
+   * **Eleição P2P por Mandato (`term`):** Os controladores ativos auditam o cluster via `reconcile_leadership()` e elegem autonomamente o nó íntegro de menor ID (`accept_leader` com maioria `2/2`).
+   * **Via Comando RPC (Failover Transparente):** Caso um comando esteja em voo na queda, o `ClusterRpcClient` aciona a reconciliação P2P do cluster e conclui a execução no novo Líder mantendo o mesmo `command_id` (`2/2` votos no quórum).
 3. Clique em **Iniciar Processo** no controlador parado: ele executa `_catch_up_from_peers()`, reconhece o novo líder ativo, clona o estado canônico atualizado para seu SQLite e reingressa como `REPLICA`.
 
 ### 4.4. Quórum Bizantino ($2f + 1$) e Destituição de Líder Comprometido
@@ -92,6 +92,6 @@ O painel web apresenta a arquitetura em tempo real via Server-Sent Events (`/api
    * O cliente consulta `get_state()` nos 3 nós em paralelo.
    * O nó comprometido retorna um hash divergente (`9003.0g` de ração), sendo marcado como `BIZANTINO` / `DIVERGENTE` e descartado pelo quórum majoritário (`2/3` votos válidos).
 3. Agora clique em **Tornar Bizantino** no próprio **Controlador Líder**:
-   * Ao detectar que o nó divergente possui `is_primary == True`, o `ClusterRpcClient` executa `_demote_and_replace()`, destituindo imediatamente o líder comprometido e promovendo uma réplica íntegra do quórum majoritário.
+   * Os controladores íntegros detectam via `evaluate_quorum()` que o Líder atual divergiu da maioria $2f+1$, votam um novo mandato (`term + 1`) via `accept_leader()` e elegem autonomamente a réplica íntegra de menor ID, ignorando mensagens do mandato antigo sem depender da cooperação do nó comprometido.
 4. Clique em **Restaurar Honesto** no nó bizantino para que ele desative a adulteração e ressincronize seu banco SQLite com o líder atual.
 

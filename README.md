@@ -18,9 +18,9 @@ Middleware e sistema distribuído para monitoramento e cuidado autônomo de pets
 ## Arquitetura Resumida
 
 * **Dispositivos IoT de Borda (`app/sensors.py`):** Publicam telemetria de ração, água, caixa de areia e perímetro de fuga via MQTT (`QoS 1`) e consomem comandos de atuadores (`QoS 2`) com deduplicação por `command_id`.
-* **Cluster de Controladores (`app/controller.py`):** 3 processos independentes (`:9091`, `:9092`, `:9093`) expostos via Pyro5 RPC, com replicação primário-réplica (`sync_state`), catch-up na inicialização e auto-eleição P2P na queda do líder.
+* **Cluster de Controladores (`app/controller.py`):** 3 processos independentes (`:9091`, `:9092`, `:9093`) expostos via Pyro5 RPC, com replicação determinística validada por hash (`sync_state`), catch-up na inicialização e eleição/destituição P2P por mandato (`term`) via quórum $2f + 1$.
 * **Persistência Isolada (`app/storage.py`):** 3 bancos SQLite (`node_1.db`, `node_2.db`, `node_3.db`) armazenando o estado canônico (`pet_state`) e o log de idempotência (`event_log`).
-* **Cliente RPC e Painel Web (`app/client.py`, `app/web_server.py`, `web/`):** Servidor HTTP/SSE (`:8080`) e cliente Pyro5 com callback push (`ClientObserver`), leitura por quórum $2f + 1$, destituição automática de líder divergente e failover transparente de comandos.
+* **Cliente RPC e Painel Web (`app/client.py`, `app/web_server.py`, `web/`):** Servidor HTTP/SSE (`:8080`) e cliente Pyro5 com callback push (`PushReceiver`), leitura e confirmação pós-escrita por quórum $2f + 1$ e failover transparente de comandos.
 
 ---
 

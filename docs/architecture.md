@@ -90,20 +90,23 @@ Publicados pelo Controlador Líder e assinados pelos dispositivos de borda (`pet
 
 ### 4.1. `PetController` (`petcare.controller.{1,2,3}`)
 
-* `ping() -> dict`: Retorna `id`, `is_primary`, `byzantine` e `hash` canônico SHA-256 (12 caracteres).
-* `get_state() -> dict`: Retorna o snapshot completo de `PetState` acrescido de metadados do nó e `hash`.
-* `sync_state(state_dict, command_id, kind, payload) -> bool`: Replica estado e evento do Líder nas réplicas secundárias.
-* `execute_command(action, command_id) -> dict`: Executa transição de comando no Líder com verificação de idempotência em `event_log`, aciona atuadores MQTT e replica via P2P.
-* `set_primary(flag) -> bool`: Promove ou rebaixa o papel do controlador.
-* `set_byzantine(flag) -> bool`: Ativa/desativa simulação de falha bizantina (quando desativada, executa catch-up imediato a partir do Líder).
+* `ping() -> dict`: Retorna `node_id`, `term`, `leader_id`, `is_primary`, `byzantine` e `hash` canônico SHA-256 (12 caracteres).
+* `get_state() -> dict`: Retorna o snapshot completo de `PetState` acrescido de metadados de mandato (`term`, `leader_id`) e `hash`.
+* `sync_state(term, leader_id, command_id, kind, target, payload, expected_hash) -> bool`: Valida o mandato do Líder, recalcula deterministicamente a transição sobre o SQLite local (`apply_transition`) e só persiste se o hash coincidir com `expected_hash`.
+* `execute_command(action, command_id) -> dict`: Executa transição de comando no Líder com verificação de idempotência em `event_log`, replicação validada por quórum P2P (`MIN_QUORUM = 2`) e atuação MQTT.
+* `reconcile_leadership() -> int | None`: Audita o quórum $2f+1$ entre os controladores e conduz eleição determinística (`term + 1`) caso não haja líder íntegro na maioria.
+* `request_vote(new_term, candidate_id) -> bool`: Vota em novo mandato somente se não estiver bizantino e após confirmar via `evaluate_quorum()` que o candidato pertence à maioria $2f+1$.
+* `commit_term(term, leader_id) -> bool`: Aplica o mandato aprovado pelo quórum, rebaixando imediatamente líderes de mandatos anteriores a `REPLICA`.
+* `promote_self() -> bool`: Solicita promoção manual sujeita à mesma votação P2P de quórum $2f+1$.
+* `set_byzantine(flag) -> bool`: Ativa/desativa simulação de falha bizantina (quando desativada, executa catch-up imediato a partir do quórum).
 * `register_observer(client_uri)` / `unregister_observer(client_uri)`: Gerencia clientes inscritos para notificações push.
 
 ### 4.2. `ClusterRpcClient` (`petcare.client`) e `PushReceiver` (`petcare.client.observer` / `petcare.web.observer`)
 
 * **Métodos expostos por `ClusterRpcClient` (`localhost:9094`):**
-  * `get_nodes_status()` / `get_last_consensus()` / `get_consensus_state(log_result=True, enforce_leader=True)`: Consulta os nós em paralelo, apura o quórum $2f+1$ e destitui líder divergente se necessário.
-  * `execute_command(action, command_id=None)`: Pré-valida o quórum $2f+1$, localiza ou elege o Líder e executa o comando com failover transparente mantendo o mesmo `command_id`.
-  * `promote_node(target_id)` / `set_byzantine(target_id, flag)`: Controla liderança e simulação bizantina nos controladores.
+  * `get_nodes_status()` / `get_last_consensus()` / `get_consensus_state(log_result=True, enforce_leader=True)`: Consulta os nós em paralelo, apura o quórum $2f+1$ (`evaluate_quorum`) e aciona eleição P2P se o cluster estiver sem líder íntegro.
+  * `execute_command(action, command_id=None)`: Valida o quórum $2f+1$ antes e após o RPC, repetindo o comando com o mesmo `command_id` no novo Líder em caso de queda ou resposta divergente.
+  * `promote_node(target_id)` / `set_byzantine(target_id, flag)`: Solicita promoção via votação P2P e controla simulação bizantina nos controladores.
   * `register_observer_on_node(node_id)` / `register_ui_observer(ui_uri)` / `unregister_ui_observer(ui_uri)`: Gerencia inscrições de push entre controladores, cliente RPC e painel web.
 * **Notificação push via `PushReceiver.on_push(payload)` (`@Pyro5.api.oneway`):**
   * `petcare.client.observer` recebe notificações dos controladores e aplica *debounce* de `80ms` antes de reavaliar o consenso.
