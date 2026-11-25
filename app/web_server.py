@@ -116,15 +116,23 @@ class AppContext:
                     self.last_consensus = latest
 
         consensus = self.last_consensus or {}
+        alive_datas = [item["data"] for item in node_map.values() if item.get("ok") and item.get("data")]
+        latest_leader = (
+            max(alive_datas, key=lambda d: int(d.get("term", 0))).get("leader_id")
+            if alive_datas
+            else None
+        )
+        effective_leader = consensus.get("leader_id") or latest_leader
         controllers, storage = [], []
         for node_id in ALL_NODES:
             rpc_info = node_map.get(node_id, {})
             data = rpc_info.get("data") or {}
+            is_primary = (node_id == effective_leader) if effective_leader is not None else bool(data.get("is_primary", False))
             controllers.append({
                 "id": node_id,
                 "alive": self.procs.is_alive(f"controller_{node_id}"),
                 "rpc_ok": bool(rpc_info.get("ok")),
-                "is_primary": bool(data.get("is_primary", False)),
+                "is_primary": is_primary,
                 "byzantine": bool(data.get("byzantine", False)),
                 "hash": data.get("hash"),
                 "divergent": node_id in consensus.get("divergent", []),
@@ -162,7 +170,7 @@ class AppContext:
             case "client_command":
                 with self._client_rpc(4.0) as rpc:
                     res = rpc.execute_command(str(body["action"]), body.get("command_id"))
-                    self.last_consensus = rpc.get_consensus_state(log_result=False, enforce_leader=False)
+                    self.last_consensus = rpc.get_consensus_state(log_result=False, enforce_leader=True)
                 self.notify_clients()
                 return res
             case "rpc_quorum" | "rpc_read":
@@ -171,8 +179,9 @@ class AppContext:
                 self.notify_clients()
                 return self.last_consensus
             case "rpc_promote":
-                with self._client_rpc(2.0) as rpc:
+                with self._client_rpc(2.5) as rpc:
                     ok = rpc.promote_node(int(body["node_id"]))
+                    self.last_consensus = rpc.get_consensus_state(log_result=False, enforce_leader=False)
                 self.notify_clients()
                 return {"ok": ok}
             case "controller_stop":

@@ -1,6 +1,5 @@
 """Processo cliente Pyro5 RPC: consenso por quorum 2f+1, failover transparente e push UI."""
 
-from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 import sys
 import threading
@@ -8,42 +7,20 @@ import uuid
 
 import Pyro5.api
 
-from app.config import ALL_NODES, CLIENT_OBJECT_NAME, CLIENT_OBSERVER_NAME, CLIENT_PORT, MIN_QUORUM, peer_uri
-from app.domain import RpcError
+from app.config import ALL_NODES, CLIENT_OBJECT_NAME, CLIENT_OBSERVER_NAME, CLIENT_PORT, peer_uri
+from app.domain import RpcError, evaluate_quorum
 from app.event_bus import emit_event
-from app.infra import ObserverRegistry, PushReceiver, install_shutdown_handler, rpc_proxy, suppress_rpc_errors
+from app.infra import (
+    ObserverRegistry, PushReceiver, install_shutdown_handler,
+    query_cluster_nodes, rpc_proxy, suppress_rpc_errors,
+)
 
 DEBOUNCE_SECONDS = 0.08
 
 
-def evaluate_quorum(results: list[dict]) -> dict:
-    """Funcao pura que apura o consenso 2f+1 (maioria >= MIN_QUORUM) sobre as respostas dos nos."""
-    def no_quorum(reason: str) -> dict:
-        return {"quorum_reached": False, "reason": reason, "nodes": results, "state": None, "divergent": []}
-
-    valid = [item for item in results if item["ok"]]
-    if len(valid) < MIN_QUORUM:
-        return no_quorum(f"Quorum indisponivel: apenas {len(valid)}/{len(ALL_NODES)} nos ativos")
-
-    majority_hash, majority_count = Counter(item["data"]["hash"] for item in valid).most_common(1)[0]
-    if majority_count < MIN_QUORUM:
-        return no_quorum("Sem consenso 2f+1: todas as respostas divergem")
-
-    majority_nodes = [item for item in valid if item["data"]["hash"] == majority_hash]
-    divergent_ids = [item["node_id"] for item in valid if item["data"]["hash"] != majority_hash]
-    return {
-        "quorum_reached": True,
-        "majority_hash": majority_hash,
-        "votes": f"{majority_count}/{len(valid)}",
-        "state": majority_nodes[0]["data"],
-        "divergent": divergent_ids,
-        "nodes": results,
-    }
-
-
 @Pyro5.api.expose
 class ClusterRpcClient:
-    """Servico cliente RPC com leitura por quorum (2f+1), destituicao de lider e failover."""
+    """Servico cliente RPC com leitura/confirmacao por quorum (2f+1) e failover transparente."""
 
     def __init__(self) -> None:
         self._last_divergent: tuple[int, ...] = ()
@@ -100,30 +77,32 @@ class ClusterRpcClient:
     def _evaluate_and_push(self) -> None:
         self._ui_observers.notify(self.get_consensus_state(log_result=False, enforce_leader=True))
 
-    def _query_all_nodes(self, method: str) -> list[dict]:
-        """Executa `method` (ping/get_state) em todos os controladores em paralelo."""
-        def query(node_id: int) -> dict:
-            try:
-                with rpc_proxy(peer_uri(node_id)) as proxy:
-                    return {"node_id": node_id, "ok": True, "data": getattr(proxy, method)()}
-            except Exception as exc:
-                return {"node_id": node_id, "ok": False, "error": str(exc)}
-
-        with ThreadPoolExecutor(max_workers=len(ALL_NODES)) as pool:
-            return list(pool.map(query, ALL_NODES))
-
     def get_nodes_status(self) -> list[dict]:
-        return self._query_all_nodes("ping")
+        return query_cluster_nodes(ALL_NODES, "ping")
 
     def get_last_consensus(self) -> dict | None:
         return self._last_consensus
 
-    def get_consensus_state(self, log_result: bool = True, enforce_leader: bool = True) -> dict:
-        """Consulta o cluster, valida quorum 2f+1 e destitui o lider caso ele esteja divergente."""
-        results = self._query_all_nodes("get_state")
-        consensus = evaluate_quorum(results)
-        self._last_consensus = consensus
+    def _request_cluster_election(self, majority_ids: list[int]) -> None:
+        """Aciona o candidato deterministico da maioria para conduzir a eleicao P2P no cluster."""
+        if not majority_ids:
+            return
+        candidate_id = min(majority_ids)
+        with suppress_rpc_errors():
+            with rpc_proxy(peer_uri(candidate_id), timeout=1.5) as proxy:
+                proxy.reconcile_leadership()
 
+    def get_consensus_state(self, log_result: bool = True, enforce_leader: bool = True) -> dict:
+        """Consulta o cluster em paralelo, valida quorum 2f+1 e solicita eleicao P2P se sem lider integro."""
+        results = query_cluster_nodes(ALL_NODES, "get_state")
+        consensus = evaluate_quorum(results)
+
+        if consensus["quorum_reached"] and enforce_leader and consensus["leader_id"] is None:
+            self._request_cluster_election(consensus["majority_ids"])
+            results = query_cluster_nodes(ALL_NODES, "get_state")
+            consensus = evaluate_quorum(results)
+
+        self._last_consensus = consensus
         if not consensus["quorum_reached"]:
             if log_result:
                 emit_event("rpc", consensus["reason"], "ERROR")
@@ -134,39 +113,26 @@ class ClusterRpcClient:
         should_log = log_result or divergent_key != self._last_divergent
         self._last_divergent = divergent_key
 
-        replacement_id = consensus["state"]["node_id"]
         for item in results:
-            if not item["ok"] or item["node_id"] not in divergent_key:
-                continue
-            node_id, node_data = item["node_id"], item["data"]
-            if should_log:
-                emit_event("rpc", f"Quorum 2f+1: No {node_id} divergente (hash {node_data['hash']} != {majority_hash}); descartado", "ERROR")
-            if enforce_leader and node_data.get("is_primary"):
-                self._demote_and_replace(node_id, replacement_id)
+            if item["ok"] and item["node_id"] in divergent_key and should_log:
+                node_hash = item["data"]["hash"]
+                emit_event(
+                    "rpc",
+                    f"Quorum 2f+1: No {item['node_id']} divergente (hash {node_hash} != {majority_hash}); descartado",
+                    "ERROR",
+                )
 
         if log_result and not divergent_key:
-            emit_event("rpc", f"Quorum 2f+1 OK ({consensus['votes']} votos, hash {majority_hash})")
+            emit_event("rpc", f"Quorum 2f+1 OK ({consensus['votes']} votos, mandato {consensus['term']}, hash {majority_hash})")
         return consensus
 
-    def _demote_and_replace(self, bad_leader_id: int, replacement_id: int) -> None:
-        with suppress_rpc_errors():
-            with rpc_proxy(peer_uri(bad_leader_id)) as proxy:
-                proxy.set_primary(False)
-        try:
-            with rpc_proxy(peer_uri(replacement_id)) as proxy:
-                proxy.set_primary(True)
-            emit_event("rpc", f"Lider {bad_leader_id} destituido por divergencia; No {replacement_id} promovido", "WARN")
-        except Exception as exc:
-            emit_event("rpc", f"Falha ao promover substituto {replacement_id}: {exc}", "ERROR")
-
     def promote_node(self, target_id: int) -> bool:
-        promoted = False
-        for node_id in ALL_NODES:
-            with suppress_rpc_errors():
-                with rpc_proxy(peer_uri(node_id)) as proxy:
-                    proxy.set_primary(node_id == target_id)
-                    promoted = promoted or (node_id == target_id)
-        return promoted
+        try:
+            with rpc_proxy(peer_uri(target_id), timeout=2.0) as proxy:
+                return bool(proxy.promote_self())
+        except Exception as exc:
+            emit_event("rpc", f"Falha ao solicitar promocao do No {target_id}: {exc}", "ERROR")
+            return False
 
     def set_byzantine(self, target_id: int, flag: bool) -> bool:
         try:
@@ -176,28 +142,17 @@ class ClusterRpcClient:
             emit_event("rpc", f"Falha ao alterar modo bizantino no No {target_id}: {exc}", "ERROR")
             return False
 
-    def _find_leader(self) -> int | None:
-        """Descobre o lider ativo em paralelo; se nenhum for primario, promove o primeiro no vivo."""
-        alive = [item for item in self.get_nodes_status() if item["ok"]]
-        for item in alive:
-            if item["data"].get("is_primary"):
-                return item["node_id"]
-        if alive:
-            chosen = alive[0]["node_id"]
-            self.promote_node(chosen)
-            return chosen
-        return None
-
     def execute_command(self, action: str, command_id: str | None = None) -> dict:
-        """Envia comando ao lider reutilizando o mesmo command_id em caso de failover."""
+        """Envia comando ao lider eleito pelo quorum e confirma pos-execucao por maioria 2f+1."""
         cmd_id = (command_id or "").strip() or str(uuid.uuid4())
-        if not self.get_consensus_state(log_result=True, enforce_leader=True)["quorum_reached"]:
+        consensus = self.get_consensus_state(log_result=True, enforce_leader=True)
+        if not consensus["quorum_reached"]:
             emit_event("rpc", f"Comando {action} abortado: sem quorum 2f+1", "ERROR")
             return {"ok": False, "error": str(RpcError.NO_QUORUM), "command_id": cmd_id}
 
         tried: set[int] = set()
         for _ in ALL_NODES:
-            leader_id = self._find_leader()
+            leader_id = consensus.get("leader_id")
             if leader_id is None or leader_id in tried:
                 break
             tried.add(leader_id)
@@ -205,16 +160,23 @@ class ClusterRpcClient:
                 with rpc_proxy(peer_uri(leader_id), timeout=2.0) as proxy:
                     response = proxy.execute_command(action, cmd_id)
                 if response.get("ok"):
-                    tag = " (idempotente)" if response.get("idempotent") else ""
-                    emit_event("rpc", f"RPC {action} ({cmd_id[:8]}) -> No {leader_id} OK{tag}")
-                    return {**response, "command_id": cmd_id, "node_id": leader_id}
-                emit_event("rpc", f"No {leader_id} recusou ({response.get('error')}); tentando failover", "WARN")
+                    post = self.get_consensus_state(log_result=False, enforce_leader=True)
+                    if (
+                        post["quorum_reached"]
+                        and leader_id in post["majority_ids"]
+                        and post["majority_hash"] == response.get("hash")
+                    ):
+                        tag = " (idempotente)" if response.get("idempotent") else ""
+                        emit_event("rpc", f"RPC {action} ({cmd_id[:8]}) -> No {leader_id} OK{tag}")
+                        return {**response, "command_id": cmd_id, "node_id": leader_id}
+                    emit_event("rpc", f"Resposta do No {leader_id} diverge do quorum 2f+1; iniciando failover", "ERROR")
+                    consensus = post
+                    continue
+                emit_event("rpc", f"No {leader_id} recusou ({response.get('error')}); iniciando failover", "WARN")
             except Exception as exc:
                 emit_event("rpc", f"Falha RPC no Lider {leader_id}: {exc}; iniciando failover", "WARN")
 
-            for candidate_id in ALL_NODES:
-                if candidate_id not in tried and self.promote_node(candidate_id):
-                    break
+            consensus = self.get_consensus_state(log_result=False, enforce_leader=True)
 
         emit_event("rpc", f"Falha ao executar {action}: nenhum controlador disponivel", "ERROR")
         return {"ok": False, "error": str(RpcError.CLUSTER_UNAVAILABLE), "command_id": cmd_id}
