@@ -1,15 +1,16 @@
 """Utilitarios compartilhados de infraestrutura: Pyro5, push assincrono, MQTT e sinais."""
 
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import suppress
 import json
 import signal
 import threading
-from typing import Callable
+from typing import Callable, Iterable
 
 import paho.mqtt.client as mqtt
 import Pyro5.api
 
-from app.config import MQTT_HOST, MQTT_KEEPALIVE, MQTT_PORT
+from app.config import MQTT_HOST, MQTT_KEEPALIVE, MQTT_PORT, peer_uri
 from app.event_bus import emit_event
 
 
@@ -23,6 +24,29 @@ def rpc_proxy(uri: str, timeout: float = 1.0) -> Pyro5.api.Proxy:
     proxy = Pyro5.api.Proxy(uri)
     proxy._pyroTimeout = timeout
     return proxy
+
+
+def query_cluster_nodes(
+    node_ids: Iterable[int],
+    method: str,
+    timeout: float = 1.0,
+    local: tuple[int, dict] | None = None,
+) -> list[dict]:
+    """Executa `method` em paralelo nos controladores (reaproveitando snapshot local se informado)."""
+    local_map = {local[0]: local[1]} if local is not None else {}
+
+    def _fetch(node_id: int) -> dict:
+        if node_id in local_map:
+            return {"node_id": node_id, "ok": True, "data": local_map[node_id]}
+        try:
+            with rpc_proxy(peer_uri(node_id), timeout=timeout) as proxy:
+                return {"node_id": node_id, "ok": True, "data": getattr(proxy, method)()}
+        except Exception as exc:
+            return {"node_id": node_id, "ok": False, "error": str(exc)}
+
+    ids = list(node_ids)
+    with ThreadPoolExecutor(max_workers=len(ids)) as pool:
+        return list(pool.map(_fetch, ids))
 
 
 @Pyro5.api.expose

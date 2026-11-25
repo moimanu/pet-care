@@ -1,5 +1,6 @@
 """Regras de negocio puras e especificacao de protocolos do Pet Care (sem rede ou banco)."""
 
+from collections import Counter
 from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timezone
 from enum import StrEnum
@@ -7,7 +8,7 @@ import hashlib
 import json
 from typing import Any, Callable
 
-from app.config import TOPIC_ACTUATORS
+from app.config import ALL_NODES, MIN_QUORUM, TOPIC_ACTUATORS
 
 MAX_FOOD_GRAMS = 500.0
 FOOD_STEP_GRAMS = 50.0
@@ -35,10 +36,14 @@ class Action(StrEnum):
     SILENCIAR_ALARME = "SILENCIAR_ALARME"
 
 
+class TransitionKind(StrEnum):
+    COMMAND = "COMMAND"
+    TELEMETRY = "TELEMETRY"
+
+
 class RpcError(StrEnum):
     NO_QUORUM = "NO_QUORUM"
     NOT_PRIMARY = "NOT_PRIMARY"
-    BYZANTINE_FAULT = "BYZANTINE_FAULT"
     CLUSTER_UNAVAILABLE = "CLUSTER_UNAVAILABLE"
 
 
@@ -126,6 +131,16 @@ def validate_telemetry(sensor: str, payload: dict) -> dict:
     return {payload_field: validator(payload.get(payload_field), payload_field)}
 
 
+def is_valid_state(state: PetState) -> bool:
+    """Verifica se todos os campos do estado respeitam os limites fisicos do dominio."""
+    try:
+        for _, state_attr, validator in SENSOR_SPECS.values():
+            validator(getattr(state, state_attr), state_attr)
+        return isinstance(state.alarme_ativo, bool)
+    except (ValueError, TypeError):
+        return False
+
+
 def _actuator(target: str, acao: Action | str, **extra) -> dict:
     return {"topic": f"{TOPIC_ACTUATORS}/{target}", "payload": {"acao": str(acao), **extra}}
 
@@ -165,3 +180,56 @@ def apply_command(state: PetState, action: str) -> tuple[PetState, list[dict]]:
             raise ValueError(f"Comando desconhecido: {action}")
 
     return next_state, actuators
+
+
+def apply_transition(state: PetState, kind: str, target: str, payload: dict) -> tuple[PetState, list[dict]]:
+    """Aplica deterministicamente um comando ou telemetria ao estado."""
+    if kind == TransitionKind.COMMAND:
+        return apply_command(state, target)
+    if kind == TransitionKind.TELEMETRY:
+        return apply_telemetry(state, target, payload)
+    raise ValueError(f"Tipo de transicao desconhecido: {kind}")
+
+
+def evaluate_quorum(results: list[dict]) -> dict:
+    """Apura consenso bizantino 2f+1 (maioria >= MIN_QUORUM) e identifica o mandato/lider valido."""
+    def no_quorum(reason: str) -> dict:
+        return {
+            "quorum_reached": False,
+            "reason": reason,
+            "nodes": results,
+            "state": None,
+            "majority_ids": [],
+            "divergent": [],
+            "term": 0,
+            "leader_id": None,
+        }
+
+    valid = [item for item in results if item["ok"]]
+    if len(valid) < MIN_QUORUM:
+        return no_quorum(f"Quorum indisponivel: apenas {len(valid)}/{len(ALL_NODES)} nos ativos")
+
+    majority_hash, majority_count = Counter(item["data"]["hash"] for item in valid).most_common(1)[0]
+    if majority_count < MIN_QUORUM:
+        return no_quorum("Sem consenso 2f+1: todas as respostas divergem")
+
+    majority_nodes = [item for item in valid if item["data"]["hash"] == majority_hash]
+    majority_ids = [item["node_id"] for item in majority_nodes]
+    divergent_ids = [item["node_id"] for item in valid if item["data"]["hash"] != majority_hash]
+
+    newest = max(majority_nodes, key=lambda item: int(item["data"].get("term", 0)))["data"]
+    term = int(newest.get("term", 0))
+    reported_leader = newest.get("leader_id")
+    leader_id = reported_leader if reported_leader in majority_ids else None
+
+    return {
+        "quorum_reached": True,
+        "majority_hash": majority_hash,
+        "votes": f"{majority_count}/{len(valid)}",
+        "state": majority_nodes[0]["data"],
+        "majority_ids": majority_ids,
+        "divergent": divergent_ids,
+        "term": term,
+        "leader_id": leader_id,
+        "nodes": results,
+    }
