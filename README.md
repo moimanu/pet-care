@@ -7,8 +7,7 @@ Middleware distribuído em Python simples para monitoramento e controle de raç�
 ## Arquitetura
 
 - **Broker MQTT ([docker-compose.yml](docker-compose.yml), [mosquitto.conf](mosquitto.conf)):** Mosquitto na porta `1883` intermediando os tópicos `petcare/sensor` e `petcare/atuador`.
-- **Sensor ([sensor.py](sensor.py)):** Publica o nível de ração em `petcare/sensor` (`QoS 1`) a cada 5 segundos.
-- **Atuador ([atuador.py](atuador.py)):** Assina `petcare/atuador` (`QoS 2`), executa `liberar_racao` e filtra comandos duplicados por `id_cmd`.
+- **Sensor e Atuador ([sensor_atuador.py](sensor_atuador.py)):** Processo único com estado compartilhado (`racao` protegida por `Lock`). Publica o nível de ração em `petcare/sensor` (`QoS 1`) a cada 5 segundos e assina `petcare/atuador` (`QoS 2`) para executar `liberar_racao`, filtrando duplicatas por `id_cmd` e somando a quantidade liberada à variável `racao`.
 - **Controladores ([controlador.py](controlador.py)):** 3 processos independentes (`:9091`, `:9092`, `:9093`) com conexões SQLite persistentes (`no_1.db`, `no_2.db`, `no_3.db`). Realizam eleição de líder por mandato, replicação por quórum ($\ge 2/3$), validação determinística nas réplicas contra valores adulterados, catch-up ao iniciar e registro transacional de idempotência (`comandos`).
 - **Cliente RPC ([cliente.py](cliente.py)):** Menu interativo no terminal via Pyro5 com consulta por quórum, geração de `id_cmd` (`uuid4`), confirmação pós-escrita por quórum e failover automático em caso de queda do líder.
 
@@ -50,7 +49,6 @@ docker compose up -d
 .venv/bin/python controlador.py 1
 .venv/bin/python controlador.py 2
 .venv/bin/python controlador.py 3
-.venv/bin/python atuador.py
-.venv/bin/python sensor.py
+.venv/bin/python sensor_atuador.py
 .venv/bin/python cliente.py
 ```
