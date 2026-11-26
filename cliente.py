@@ -1,4 +1,3 @@
-from collections import Counter
 import uuid
 import Pyro5.api
 
@@ -12,6 +11,16 @@ def conectar_no(id_no, timeout=1.0):
     return conexao
 
 
+def tentar_eleger_lider(candidatos):
+    for id_no in candidatos:
+        try:
+            if conectar_no(id_no, 1.5).eleger_lider():
+                return id_no
+        except Exception:
+            pass
+    return None
+
+
 def consultar_quorum():
     respostas = []
     for id_no in NOS:
@@ -23,22 +32,41 @@ def consultar_quorum():
     if len(respostas) < QUORUM:
         return None, f"Sem quorum ({len(respostas)}/3 nos online)"
 
-    racao, votos = Counter(resposta["racao"] for resposta in respostas).most_common(1)[0]
-    if votos < QUORUM:
-        return None, f"Divergencia entre nos ({votos}/3 concordam)"
+    racao = None
+    hash_quorum = None
+    votos = 0
+    for referencia in respostas:
+        contagem = 0
+        for outra in respostas:
+            if outra["racao"] == referencia["racao"] and outra["hash_estado"] == referencia["hash_estado"]:
+                contagem += 1
+        if contagem > votos:
+            votos = contagem
+            racao = referencia["racao"]
+            hash_quorum = referencia["hash_estado"]
 
-    nos_vivos = {resposta["id_no"] for resposta in respostas}
-    lider = next((resposta["lider_id"] for resposta in respostas if resposta["lider_id"] in nos_vivos), None)
+    if votos < QUORUM:
+        return None, f"Divergencia de estado/hash entre nos ({votos}/3 concordam)"
+
+    consistentes = []
+    nos_vivos = []
+    for resposta in respostas:
+        if resposta["racao"] == racao and resposta["hash_estado"] == hash_quorum:
+            consistentes.append(resposta)
+            nos_vivos.append(resposta["id_no"])
+    nos_vivos.sort()
+
+    lider = None
+    maior_mandato = -1
+    for resposta in consistentes:
+        if resposta["lider_id"] == resposta["id_no"] and resposta["mandato"] > maior_mandato:
+            maior_mandato = resposta["mandato"]
+            lider = resposta["id_no"]
 
     if lider is None:
-        candidato = min(nos_vivos)
-        try:
-            if conectar_no(candidato, 1.5).eleger_lider():
-                return consultar_quorum()
-        except Exception:
-            pass
+        lider = tentar_eleger_lider(nos_vivos)
 
-    return {"racao": racao, "lider": lider, "votos": votos, "vivos": sorted(nos_vivos)}, None
+    return {"racao": racao, "lider": lider, "votos": votos, "vivos": nos_vivos}, None
 
 
 def enviar_liberacao_racao():
@@ -46,26 +74,35 @@ def enviar_liberacao_racao():
     for _ in NOS:
         estado, erro = consultar_quorum()
         if erro:
-            return print(f"[ERRO] {erro}")
+            print(f"[ERRO] {erro}")
+            return
         lider = estado["lider"]
         if lider is None:
-            return print("[ERRO] Nenhum lider eleito")
+            print("[ERRO] Nenhum lider eleito")
+            return
         try:
             resposta = conectar_no(lider, 2.0).liberar_racao(id_comando)
-            if resposta.get("ok"):
-                estado_pos_escrita, erro_pos_escrita = consultar_quorum()
+            if resposta["ok"]:
+                estado_confirmado, erro_confirmacao = consultar_quorum()
                 if (
-                    not erro_pos_escrita
-                    and lider in estado_pos_escrita["vivos"]
-                    and estado_pos_escrita["racao"] == resposta["racao"]
+                    not erro_confirmacao
+                    and lider in estado_confirmado["vivos"]
+                    and estado_confirmado["racao"] == resposta["racao"]
                 ):
-                    tag = " (idempotente)" if resposta.get("idempotente") else ""
-                    return print(
-                        f"[OK] Racao liberada pelo Lider {lider}{tag}! Nivel atual: {resposta['racao']}g"
-                    )
+                    if resposta["idempotente"]:
+                        print(f"[OK] Racao liberada pelo Lider {lider} (idempotente)! Nivel atual: {resposta['racao']}g")
+                    else:
+                        print(f"[OK] Racao liberada pelo Lider {lider}! Nivel atual: {resposta['racao']}g")
+                    return
                 print(f"[FAILOVER] Resposta do Lider {lider} diverge do quorum, tentando outro...")
                 continue
-            print(f"[FAILOVER] No {lider} recusou ({resposta.get('erro')}), tentando outro...")
+
+            print(f"[FAILOVER] No {lider} recusou ({resposta['erro']}), tentando outro...")
+            outros_vivos = []
+            for id_no in estado["vivos"]:
+                if id_no != lider:
+                    outros_vivos.append(id_no)
+            tentar_eleger_lider(outros_vivos)
         except Exception as falha:
             print(f"[FAILOVER] Lider {lider} caiu ({falha}), elegendo novo lider...")
     print("[ERRO] Cluster indisponivel")
