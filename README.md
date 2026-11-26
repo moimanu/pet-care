@@ -1,30 +1,27 @@
-# Sistema IoT Distribuído de Pet Care
+# Pet Care Distribuído (Versão Minimalista)
 
-Middleware e sistema distribuído para monitoramento e cuidado autônomo de pets, desenvolvido para o 1º Trabalho Prático de Sistemas Distribuídos. Combina comunicação baseada em objetos via RPC (**Pyro5**), mensageria pub/sub (**MQTT**), persistência replicada (**SQLite**), tolerância a falhas *Crash-Stop* com failover transparente e consenso por quórum bizantino ($2f + 1$).
+Middleware distribuído em Python simples para monitoramento e controle de ração, desenvolvido para o 1º Trabalho Prático de Sistemas Distribuídos. Combina **MQTT** (`paho-mqtt`), **RPC baseado em objetos** (`Pyro5`) e **persistência replicada** (`SQLite`) com quórum ($\ge 2$ de $3$), eleição de liderança, failover transparente, validação determinística nas réplicas e idempotência.
+
+---
+
+## Arquitetura
+
+- **Broker MQTT ([docker-compose.yml](docker-compose.yml), [mosquitto.conf](mosquitto.conf)):** Mosquitto na porta `1883` intermediando os tópicos `petcare/sensor` e `petcare/atuador`.
+- **Sensor ([sensor.py](sensor.py)):** Publica o nível de ração em `petcare/sensor` (`QoS 1`) a cada 5 segundos.
+- **Atuador ([atuador.py](atuador.py)):** Assina `petcare/atuador` (`QoS 2`), executa `liberar_racao` e filtra comandos duplicados por `id_cmd`.
+- **Controladores ([controlador.py](controlador.py)):** 3 processos independentes (`:9091`, `:9092`, `:9093`) com conexões SQLite persistentes (`no_1.db`, `no_2.db`, `no_3.db`). Realizam eleição de líder por mandato, replicação por quórum ($\ge 2/3$), validação determinística nas réplicas contra valores adulterados, catch-up ao iniciar e registro transacional de idempotência (`comandos`).
+- **Cliente RPC ([cliente.py](cliente.py)):** Menu interativo no terminal via Pyro5 com consulta por quórum, geração de `id_cmd` (`uuid4`), confirmação pós-escrita por quórum e failover automático em caso de queda do líder.
 
 ---
 
 ## Documentação
 
-| Documento | Descrição |
-| :--- | :--- |
-| **[Relatório](docs/report.md)** | Apresentação do tema e soluções para replicação, failover na queda do controlador e segurança por quórum bizantino ($2f + 1$). |
-| **[Arquitetura e Modelagem](docs/architecture.md)** | Topologia, portas, objetos remotos Pyro5, contratos de tópicos MQTT, esquema SQLite e estrutura de módulos. |
-| **[Execução e Testes](docs/execution-and-testing.md)** | Instalação, inicialização automática e manual, roteiro de validação e injeção de falhas no painel web. |
-| **[Especificação do Trabalho](docs/trabalho-pratico.pdf)** | Enunciado original do 1º Trabalho Prático de Sistemas Distribuídos. |
+- **[Especificação do Trabalho](docs/trabalho-pratico.pdf)**
+- **[Fluxo de Decisão](docs/fluxo-decisao.md)**
 
 ---
 
-## Arquitetura Resumida
-
-* **Dispositivos IoT de Borda (`app/sensors.py`):** Publicam telemetria de ração, água, caixa de areia e perímetro de fuga via MQTT (`QoS 1`) e consomem comandos de atuadores (`QoS 2`) com deduplicação por `command_id`.
-* **Cluster de Controladores (`app/controller.py`):** 3 processos independentes (`:9091`, `:9092`, `:9093`) expostos via Pyro5 RPC, com replicação determinística validada por hash (`sync_state`), catch-up na inicialização e eleição/destituição P2P por mandato (`term`) via quórum $2f + 1$.
-* **Persistência Isolada (`app/storage.py`):** 3 bancos SQLite (`node_1.db`, `node_2.db`, `node_3.db`) armazenando o estado canônico (`pet_state`) e o log de idempotência (`event_log`).
-* **Cliente RPC e Painel Web (`app/client.py`, `app/web_server.py`, `web/`):** Servidor HTTP/SSE (`:8080`) e cliente Pyro5 com callback push (`PushReceiver`), leitura e confirmação pós-escrita por quórum $2f + 1$ e failover transparente de comandos.
-
----
-
-## Início Rápido
+## Como Executar
 
 ### 1. Instalar dependências
 
@@ -34,16 +31,26 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-### 2. Iniciar o sistema
+### 2. Iniciar tudo (GNOME Console `kgx` com abas)
 
 ```bash
-./scripts/start_system.sh
+./run.sh
 ```
 
-Para reiniciar limpando bancos SQLite e logs anteriores:
+Para apagar os bancos SQLite (`no_*.db`) antes de iniciar:
 
 ```bash
-./scripts/start_system.sh --reset
+./run.sh --reset
 ```
 
-Acesse o fluxograma interativo em **http://localhost:8080/**.
+### 3. Execução manual (opcional, 1 processo por terminal)
+
+```bash
+docker compose up -d
+.venv/bin/python controlador.py 1
+.venv/bin/python controlador.py 2
+.venv/bin/python controlador.py 3
+.venv/bin/python atuador.py
+.venv/bin/python sensor.py
+.venv/bin/python cliente.py
+```
